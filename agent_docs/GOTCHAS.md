@@ -40,6 +40,12 @@ Fixed colors (e.g. `bg:#1a1a2e`) look wrong across themes. `bg:default` blends w
 ## 9. Skill mascot "eyes" use spaces
 
 The mascot's eyes are spaces showing the terminal background, not `on <color>` fills. `on <color>` paints solid blocks and hides the "eyes."
+
+## 10. REPL: raw `console.print` between prompts breaks IME
+
+Rich output between `prompt_toolkit` prompts moves the terminal cursor without updating PT's renderer; macOS Chinese/Japanese IME often stops working after long multi-line output (e.g. `/skills`).
+
+- Fix: wrap prints in `prompt_toolkit.patch_stdout.patch_stdout()` (`_repl_print` in `cli.py`).
 # Gotchas
 
 ## 1. Do not `await` `provider.stream()`
@@ -82,6 +88,12 @@ Fixed colors (e.g. `bg:#1a1a2e`) look wrong across themes. `bg:default` blends w
 ## 9. Skill mascot “eyes” use spaces
 
 The mascot’s eyes are spaces showing the terminal background, not `on <color>` fills. `on <color>` paints solid blocks and hides the “eyes.”
+
+## 10. REPL: raw `console.print` between prompts breaks IME
+
+Rich output between `prompt_toolkit` prompts moves the terminal cursor without updating PT's renderer; macOS Chinese/Japanese IME often stops working after long multi-line output (e.g. `/skills`).
+
+- Fix: wrap prints in `prompt_toolkit.patch_stdout.patch_stdout()` (`_repl_print` in `cli.py`).
 # Gotchas
 
 ## 1. Do not `await` `provider.stream()`
@@ -124,3 +136,9 @@ Fixed colors (e.g. `bg:#1a1a2e`) look wrong across themes. `bg:default` blends w
 ## 9. Skill mascot “eyes” use spaces
 
 The mascot’s eyes are spaces showing the terminal background, not `on <color>` fills. `on <color>` paints solid blocks and hides the “eyes.”
+
+## 10. REPL: raw `console.print` between prompts breaks IME
+
+Rich output between `prompt_toolkit` prompts moves the terminal cursor without updating PT's renderer; macOS Chinese/Japanese IME often stops working after long multi-line output (e.g. `/skills`).
+
+- Fix: wrap prints in `prompt_toolkit.patch_stdout.patch_stdout()` (`_repl_print` in `cli.py`).

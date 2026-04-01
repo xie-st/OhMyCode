@@ -30,6 +30,45 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
             metadata[key.strip()] = value.strip()
     return metadata, body
 
+def _register_skill(
+    skill_dir: Path,
+    map_key: str,
+    source_label: str,
+    skills: dict[str, SkillInfo],
+) -> None:
+    skill_file = skill_dir / "SKILL.md"
+    if not skill_file.is_file() or map_key in skills:
+        return
+    try:
+        text = skill_file.read_text(encoding="utf-8")
+    except OSError:
+        return
+    meta, _ = parse_frontmatter(text)
+    name = meta.get("name", map_key)
+    description = meta.get("description", "")
+    skills[map_key] = SkillInfo(
+        name=name,
+        description=description,
+        path=skill_file.resolve(),
+        base_dir=str(skill_dir.resolve()),
+        source=source_label,
+    )
+
+
+def _scan_one_skills_root(base_dir: Path, source_label: str, skills: dict[str, SkillInfo]) -> None:
+    """Flat dirs `<root>/<name>/SKILL.md` or one level of grouping `<root>/<group>/<name>/SKILL.md`."""
+    for child in sorted(base_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        if (child / "SKILL.md").is_file():
+            _register_skill(child, child.name, source_label, skills)
+            continue
+        for nested in sorted(child.iterdir()):
+            if not nested.is_dir():
+                continue
+            _register_skill(nested, nested.name, source_label, skills)
+
+
 def scan_skills(cwd: str = ".") -> dict[str, SkillInfo]:
     cwd_path = Path(cwd).resolve()
     home = Path.home()
@@ -43,27 +82,7 @@ def scan_skills(cwd: str = ".") -> dict[str, SkillInfo]:
     for base_dir, source_label in search_dirs:
         if not base_dir.is_dir():
             continue
-        for child in sorted(base_dir.iterdir()):
-            if not child.is_dir():
-                continue
-            skill_file = child / "SKILL.md"
-            if not skill_file.is_file():
-                continue
-            dir_name = child.name
-            if dir_name in skills:
-                continue
-            try:
-                text = skill_file.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            meta, _ = parse_frontmatter(text)
-            name = meta.get("name", dir_name)
-            description = meta.get("description", "")
-            skills[dir_name] = SkillInfo(
-                name=name, description=description,
-                path=skill_file.resolve(), base_dir=str(child.resolve()),
-                source=source_label,
-            )
+        _scan_one_skills_root(base_dir, source_label, skills)
     return skills
 
 def load_skill(skill: SkillInfo, arguments: str = "") -> str:

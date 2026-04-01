@@ -3,7 +3,7 @@
     <img src="assets/octopus.png" alt="" width="100" height="100" style="display: block; align-self: center;">
     <img src="assets/ohmycode.png" alt="OhMyCode" height="90" style="display: block; width: auto; align-self: center;">
   </h1>
-  <p><b>Minimal and Customizable CC-Style Coding Agent</b></p>
+  <p><b>Minimal and Customizable CC-Style Coding Agent. That's the entire thing.</b></p>
   <blockquote><i>
     A fully-functional CC-style AI coding assistant you can read in an afternoon — and tell it to extend itself.<br>
     <span style="color:#ec407a;font-style:italic;">"Oh My Code!!!"</span>

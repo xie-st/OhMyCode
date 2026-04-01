@@ -60,7 +60,7 @@ User input → cli.py
 
 1. **New tool** — new file under `ohmycode/tools/` + `@register_tool`
 2. **New provider** — new file under `ohmycode/providers/` + `register_provider()`
-3. **New skill** — `.claude/skills/<name>/SKILL.md` (or `.ohmycode/skills/`, `.agents/skills/`)
+3. **New skill** — `.claude/skills/<name>/SKILL.md` or `.claude/skills/<group>/<name>/SKILL.md` (same for `.ohmycode/skills/`, `.agents/skills/`)
 4. **Permission rules** — `rules` array in `config.json`
 5. **System prompt** — `CLAUDE.md` or `OHMYCODE.md` at project root, or `config.system_prompt_append`
 # OhMyCode Architecture
@@ -125,7 +125,7 @@ User input → cli.py
 
 1. **New tool** — new file under `ohmycode/tools/` + `@register_tool`
 2. **New provider** — new file under `ohmycode/providers/` + `register_provider()`
-3. **New skill** — `.claude/skills/<name>/SKILL.md` (or `.ohmycode/skills/`, `.agents/skills/`)
+3. **New skill** — `.claude/skills/<name>/SKILL.md` or `.claude/skills/<group>/<name>/SKILL.md` (same for `.ohmycode/skills/`, `.agents/skills/`)
 4. **Permission rules** — `rules` array in `config.json`
 5. **System prompt** — `CLAUDE.md` or `OHMYCODE.md` at project root, or `config.system_prompt_append`
 # OhMyCode Architecture
@@ -190,6 +190,6 @@ User input → cli.py
 
 1. **New tool** — new file under `ohmycode/tools/` + `@register_tool`
 2. **New provider** — new file under `ohmycode/providers/` + `register_provider()`
-3. **New skill** — `.claude/skills/<name>/SKILL.md` (or `.ohmycode/skills/`, `.agents/skills/`)
+3. **New skill** — `.claude/skills/<name>/SKILL.md` or `.claude/skills/<group>/<name>/SKILL.md` (same for `.ohmycode/skills/`, `.agents/skills/`)
 4. **Permission rules** — `rules` array in `config.json`
 5. **System prompt** — `CLAUDE.md` or `OHMYCODE.md` at project root, or `config.system_prompt_append`

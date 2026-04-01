@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console
+from rich.text import Text
 
 from ohmycode.config.config import load_config, OhMyCodeConfig
 from ohmycode.core.loop import ConversationLoop
@@ -20,6 +21,75 @@ console = Console()
 
 # CLI accent: warm pink (less magenta than ANSI bright_magenta); matches toolbar mode indicator
 ACCENT_PINK = "#ff6b9d"
+
+# Claw-style block letters (cf. claw-cli startup_banner): merged rows, no multi-line pixel sprite.
+# Second letter is explicit H (middle bar on row 3: ███████║), not U-shaped.
+_OHMY_BLOCK_LINES = (
+    " ██████╗██╗  ██╗███╗   ███╗██╗   ██╗\n"
+    "██╔═══██╗██║  ██║████╗ ████║╚██╗ ██╔╝\n"
+    "██║   ██║███████║██╔████╔██║ ╚████╔╝ \n"
+    "██║   ██║██╔══██║██║╚██╔╝██║  ╚██╔╝  \n"
+    "╚██████╔╝██║  ██║██║ ╚═╝ ██║   ██║   \n"
+    " ╚═════╝╚═╝  ╚═╝╚═╝     ╚═╝   ╚═╝   "
+)
+
+# REPL input line prefix (after separator); must match _get_prompt() in run_repl
+REPL_PROMPT_LINE_PREFIX = "❯  "
+
+
+def _repl_prompt_prefix_display_width() -> int:
+    """Terminal display width of REPL_PROMPT_LINE_PREFIX (East Asian / emoji-safe)."""
+    try:
+        from wcwidth import wcswidth
+
+        w = wcswidth(REPL_PROMPT_LINE_PREFIX)
+        if w >= 0:
+            return w
+    except ImportError:
+        pass
+    return len(REPL_PROMPT_LINE_PREFIX)
+
+
+def _patch_pt_completion_menu_align_left(pt_session: Any) -> None:
+    """Keep slash-command completion menu aligned with input (not following the cursor)."""
+    try:
+        from prompt_toolkit.layout import walk
+        from prompt_toolkit.layout.containers import FloatContainer
+        from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
+    except ImportError:
+        return
+    # CompletionsMenu draws each item with a leading space (see
+    # prompt_toolkit.layout.menus._get_menu_item_fragments); offset the float
+    # by one cell so the visible text lines up with the buffer, not the cursor.
+    left = max(0, _repl_prompt_prefix_display_width() - 1)
+    for container in walk(pt_session.layout.container):
+        if not isinstance(container, FloatContainer):
+            continue
+        for fl in container.floats:
+            if isinstance(fl.content, (CompletionsMenu, MultiColumnCompletionsMenu)):
+                fl.left = left
+                fl.xcursor = False
+
+
+def _build_repl_welcome_text(
+    model_display: str,
+    mode: str,
+    n_skills: int,
+) -> Text:
+    """Claw-inspired: big block letters + subtitle + aligned meta rows."""
+    t = Text()
+    t.append(_OHMY_BLOCK_LINES, style=ACCENT_PINK)
+    t.append("  ")
+    t.append("Code", style=f"bold {ACCENT_PINK}")
+    t.append(" v0.1.0\n\n", style="dim")
+    label_w = 12
+    t.append("Model".ljust(label_w), style="dim")
+    t.append(f"{model_display}\n", style="bold")
+    t.append("Mode".ljust(label_w), style="dim")
+    t.append(f"{mode}\n", style="green")
+    t.append("Skills".ljust(label_w), style="dim")
+    t.append(f"{n_skills} available\n", style="dim")
+    return t
 
 
 # ── Argument parsing ────────────────────────────────────────────────────────────
@@ -353,67 +423,25 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
         else:
             console.print("[yellow]No conversation found to resume.[/yellow]\n")
 
-    # Welcome banner with pink accent border
-    import shutil as _shutil
-    import os as _os
-    _tw = _shutil.get_terminal_size().columns
-
+    # Welcome banner (Claw-inspired: block letters + meta rows; no pixel sprite)
     from rich.panel import Panel
-    from rich.table import Table
-    from rich.text import Text
     from rich import box as rich_box
-
-    # Pac-man ghost–style pixel mascot
-    p = ACCENT_PINK  # Same as border color
-    _wide_line_gap = _os.environ.get("TERM_PROGRAM") == "Apple_Terminal"
-
-    def _octopus() -> Text:
-        """Build Pac-man ghost–style mascot, adapting to terminal line spacing."""
-        t = Text()
-        if _wide_line_gap:
-            bg = f"on {p}"
-            s = f"{p} {bg}"
-            t.append(" ▄██████▄\n", style=p)
-            t.append("██████████\n", style=s)
-            t.append("██", style=s); t.append(" ", style=""); t.append("████", style=s); t.append(" ", style=""); t.append("██\n", style=s)
-            t.append("█▀█▀██▀█▀█", style=p)
-        else:
-            t.append(" ▄██████▄\n", style=p)
-            t.append("██████████\n", style=p)
-            t.append("██", style=p); t.append(" ", style=""); t.append("████", style=p); t.append(" ", style=""); t.append("██\n", style=p)
-            t.append("█▀█▀██▀█▀█", style=p)
-        return t
-
-    # Two columns: mascot left, info right
-    cwd_display = _os.getcwd()
-    home = str(Path.home())
-    if cwd_display.startswith(home):
-        cwd_display = "~" + cwd_display[len(home):]
 
     import re
     model_display = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", config.model)
 
-    right_info = Text()
-    right_info.append(f"{model_display}\n", style="bold")
-    right_info.append(f"Mode: ", style="dim")
-    right_info.append(f"{config.mode}\n", style="green")
-    right_info.append(f"{len(available_skills)} skills available", style="dim")
+    welcome_body = _build_repl_welcome_text(
+        model_display=model_display,
+        mode=config.mode,
+        n_skills=len(available_skills),
+    )
 
-    banner_table = Table(show_header=False, show_edge=False, show_lines=False,
-                         padding=(1, 1), expand=True, box=None)
-    banner_table.add_column(width=16, no_wrap=True)
-    banner_table.add_column(ratio=1)
-
-    banner_table.add_row(_octopus(), right_info)
-
-    # Wrap in rounded pink border
     banner = Panel(
-        banner_table,
-        title=f"[bold {ACCENT_PINK}]◆ OhMyCode[/] [dim]v0.1.0[/]",
+        welcome_body,
+        title=f"[bold {ACCENT_PINK}]◆ OhMyCode[/]",
         title_align="left",
         border_style=ACCENT_PINK,
         box=rich_box.ROUNDED,
-        # Rich 2-tuple padding is (top, right) mirrored to (top, right, bottom, left); was (0,2) → no vertical pad
         padding=(2, 2),
     )
     console.print()
@@ -525,7 +553,7 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
             sep = "─" * _term_width
             return FormattedText([
                 ("class:separator", sep + "\n"),
-                ("", "❯  "),
+                ("", REPL_PROMPT_LINE_PREFIX),
             ])
 
         from prompt_toolkit.filters import Condition
@@ -549,9 +577,35 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
             bottom_toolbar=_get_toolbar,
             prompt_continuation="   ",
         )
+        _patch_pt_completion_menu_align_left(pt_session)
         use_prompt_toolkit = True
     except ImportError:
         pass
+
+    def _repl_print(*args: Any, **kwargs: Any) -> None:
+        """Send Rich output through patch_stdout when using prompt_toolkit.
+
+        Raw console.print between prompts desyncs the terminal cursor from PT's
+        renderer; macOS IME (e.g. Chinese) often breaks after large prints
+        (e.g. /skills). patch_stdout hides/restores the prompt layer correctly.
+        """
+        if use_prompt_toolkit and pt_session is not None:
+            from prompt_toolkit.patch_stdout import patch_stdout
+
+            with patch_stdout():
+                console.print(*args, **kwargs)
+        else:
+            console.print(*args, **kwargs)
+
+    def _repl_print_plain(*args: Any, **kwargs: Any) -> None:
+        """Plain print (no Rich/ANSI). Use when patch_stdout breaks escape sequences."""
+        if use_prompt_toolkit and pt_session is not None:
+            from prompt_toolkit.patch_stdout import patch_stdout
+
+            with patch_stdout():
+                print(*args, **kwargs, flush=True)
+        else:
+            print(*args, **kwargs, flush=True)
 
     async def _read_line() -> str | None:
         if use_prompt_toolkit and pt_session is not None:
@@ -573,12 +627,12 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
         try:
             user_input = await _read_line()
         except KeyboardInterrupt:
-            console.print("\n[yellow](Use /exit to quit)[/yellow]")
+            _repl_print("\n[yellow](Use /exit to quit)[/yellow]")
             continue
 
         if user_input is None:
             # EOF
-            console.print("\n[dim]Goodbye.[/dim]")
+            _repl_print_plain("\nGoodbye.")
             break
 
         user_input = user_input.strip()
@@ -591,11 +645,11 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
             cmd = parts[0].lower()
 
             if cmd == "/exit":
-                console.print("[dim]Goodbye.[/dim]")
+                _repl_print_plain("Goodbye.")
                 if conv.messages:
                     from ohmycode.storage.conversation import save_conversation
                     save_conversation(conv.messages, config.provider, config.model, config.mode)
-                    console.print(f"[dim]Conversation saved.[/dim]")
+                    _repl_print_plain("Conversation saved.")
                 # Memory extraction (silent failure)
                 if conv.messages and conv._provider:
                     try:
@@ -612,17 +666,17 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
             elif cmd == "/clear":
                 conv.messages.clear()
                 conv.auto_approved.clear()
-                console.print("[dim]Conversation cleared.[/dim]")
+                _repl_print("[dim]Conversation cleared.[/dim]")
                 continue
 
             elif cmd == "/mode":
                 if len(parts) < 2:
-                    console.print(f"[dim]Current mode: {current_mode}[/dim]")
-                    console.print("[dim]Usage: /mode <default|auto|plan>[/dim]")
+                    _repl_print(f"[dim]Current mode: {current_mode}[/dim]")
+                    _repl_print("[dim]Usage: /mode <default|auto|plan>[/dim]")
                 else:
                     new_mode = parts[1].strip()
                     if new_mode not in ("default", "auto", "plan"):
-                        console.print(f"[red]Unknown mode: {new_mode}[/red]")
+                        _repl_print(f"[red]Unknown mode: {new_mode}[/red]")
                     else:
                         current_mode = new_mode
                         # Rebuild config and loop to apply new mode
@@ -633,30 +687,30 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
                             config=config, confirm_fn=confirm_tool_call
                         )
                         conv.initialize()
-                        console.print(f"[dim]Mode switched to: {current_mode}[/dim]")
+                        _repl_print(f"[dim]Mode switched to: {current_mode}[/dim]")
                 continue
 
             elif cmd == "/status":
                 status = conv.get_status_snapshot()
-                console.print()
-                console.print("  [bold]Session status[/]")
-                console.print(
+                _repl_print()
+                _repl_print("  [bold]Session status[/]")
+                _repl_print(
                     f"    [dim]Model:[/] {status['provider']} / {status['model']}    "
                     f"[dim]Mode:[/] {status['mode']}"
                 )
-                console.print(
+                _repl_print(
                     f"    [dim]Messages:[/] {status['message_count']}    "
                     f"[dim]Context:[/] {status['used_tokens']:,} / {status['effective_window']:,} tokens "
                     f"([bold]{status['usage_percent']:.1f}%[/])"
                 )
-                console.print(
+                _repl_print(
                     f"    [dim]Budget:[/] {status['token_budget']:,} total, "
                     f"{status['output_reserved']:,} reserved for output"
                 )
-                console.print(
+                _repl_print(
                     f"    [dim]Compression stage:[/] {status['compression_stage']}"
                 )
-                console.print()
+                _repl_print()
                 continue
 
             elif user_input.startswith("/memory"):
@@ -666,14 +720,14 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
                     memories = list_memories()
                     if memories:
                         for m in memories:
-                            console.print(f"  [{m['type']}] {m['name']} ({m['filename']})")
+                            _repl_print(f"  [{m['type']}] {m['name']} ({m['filename']})")
                     else:
-                        console.print("[dim]No memories saved.[/dim]")
+                        _repl_print("[dim]No memories saved.[/dim]")
                 elif parts[1] == "delete" and len(parts) > 2:
                     if delete_memory(parts[2]):
-                        console.print(f"[dim]Deleted {parts[2]}[/dim]")
+                        _repl_print(f"[dim]Deleted {parts[2]}[/dim]")
                     else:
-                        console.print(f"[yellow]Memory not found: {parts[2]}[/yellow]")
+                        _repl_print(f"[yellow]Memory not found: {parts[2]}[/yellow]")
                 continue
 
             elif cmd == "/vchange":
@@ -683,14 +737,14 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
                     try:
                         step = int(arg)
                     except ValueError:
-                        console.print("[red]Usage: /vchange [-N|N]  (e.g. /vchange -1)[/red]")
+                        _repl_print("[red]Usage: /vchange [-N|N]  (e.g. /vchange -1)[/red]")
                         continue
                 run_vchange(step)
                 continue
 
             elif cmd == "/skills":
                 if available_skills:
-                    console.print("\n  [bold]Available skills:[/]")
+                    _repl_print("\n  [bold]Available skills:[/]")
                     # Longest skill name for column alignment
                     max_name = max(len(s) for s in available_skills) + 1
                     for skill_name, info in sorted(available_skills.items()):
@@ -699,10 +753,10 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
                         # Truncate description to 60 chars
                         if len(desc) > 60:
                             desc = desc[:57] + "..."
-                        console.print(f"    [cyan]{padded}[/] [dim]{desc}[/]")
-                    console.print()
+                        _repl_print(f"    [cyan]{padded}[/] [dim]{desc}[/]")
+                    _repl_print()
                 else:
-                    console.print("[dim]No skills found.[/dim]")
+                    _repl_print("[dim]No skills found.[/dim]")
                 continue
 
             else:
@@ -714,13 +768,13 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
                     try:
                         finish_reason = await render_stream(conv)
                         if finish_reason == "max_turns":
-                            console.print("[yellow]Reached maximum turns limit.[/yellow]")
+                            _repl_print("[yellow]Reached maximum turns limit.[/yellow]")
                     except KeyboardInterrupt:
                         conv.cancel()
-                        console.print("\n[yellow](Generation cancelled. Continue or /exit)[/yellow]")
+                        _repl_print("\n[yellow](Generation cancelled. Continue or /exit)[/yellow]")
                 else:
-                    console.print(f"[red]Unknown command: {cmd}[/red]")
-                    console.print("[dim]Available: /exit /clear /mode /status /memory /skills[/dim]")
+                    _repl_print(f"[red]Unknown command: {cmd}[/red]")
+                    _repl_print("[dim]Available: /exit /clear /mode /status /memory /skills[/dim]")
                 continue
 
         # ── Normal user message ──────────────────────────────────────────
@@ -730,12 +784,12 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
         try:
             finish_reason = await render_stream(conv)
             if finish_reason == "max_turns":
-                console.print(
+                _repl_print(
                     "[yellow]Reached maximum turns limit.[/yellow]"
                 )
         except KeyboardInterrupt:
             conv.cancel()
-            console.print("\n[yellow](Generation cancelled. Continue or /exit)[/yellow]")
+            _repl_print("\n[yellow](Generation cancelled. Continue or /exit)[/yellow]")
 
     return 0
 

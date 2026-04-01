@@ -47,6 +47,17 @@ def test_scan_skills_reads_claude_and_agents(tmp_path):
     assert "s1" in skills
     assert "s2" in skills
 
+
+def test_scan_skills_nested_group_folder(tmp_path):
+    """e.g. .claude/skills/superpowers/brainstorming/SKILL.md"""
+    nested = tmp_path / ".claude" / "skills" / "superpowers" / "brainstorming"
+    nested.mkdir(parents=True)
+    (nested / "SKILL.md").write_text("---\ndescription: nested skill\n---\nBody")
+    skills = scan_skills(cwd=str(tmp_path))
+    assert "brainstorming" in skills
+    assert skills["brainstorming"].description == "nested skill"
+    assert "superpowers" not in skills
+
 def test_load_skill_replaces_arguments(tmp_path):
     skill_dir = tmp_path / "sk"
     skill_dir.mkdir()
