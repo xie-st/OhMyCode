@@ -140,6 +140,29 @@ Add entries to the `rules` array in config:
 - Shared fixtures in `tests/conftest.py`
 - Run: `python3 -m pytest tests/ -v`
 
+## Local CLI setup (required before development)
+
+Always bind the CLI to the current workspace (avoid stale editable links):
+
+```bash
+./scripts/setup-cli.sh
+pip3 show ohmycode | rg "Editable project location"
+```
+
+If the editable location is not the current repo path, reinstall from this repo directory.
+
+CLI-only rule for this repository: always start with `ohmycode`.
+
+If `ohmycode` is still not found, add your user script directory to PATH (macOS default):
+
+```bash
+echo 'export PATH="$HOME/Library/Python/3.9/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+which ohmycode
+```
+
+The setup script also creates a stable shim at `~/.local/bin/ohmycode` to reduce PATH drift across environments.
+
 ## Commits
 
 Use [Conventional Commits](https://www.conventionalcommits.org/):

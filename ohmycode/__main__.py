@@ -1,4 +1,4 @@
-"""Entry point for `python -m ohmycode` and `ohmycode` CLI."""
+"""Entry point for the `ohmycode` CLI."""
 
 import sys
 

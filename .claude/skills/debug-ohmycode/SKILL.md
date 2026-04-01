@@ -33,9 +33,9 @@ Error? → Which category?
 **Symptoms:** `ohmycode: command not found`, `ModuleNotFoundError`
 
 **Steps:**
-1. Check installation: `python3 -m pip show ohmycode`
-2. Check PATH: `which ohmycode` or `python3 -m ohmycode --help`
-3. Reinstall: `cd <project_dir> && pip3 install -e ".[dev]"`
+1. Check installation: `pip3 show ohmycode`
+2. Check PATH: `which ohmycode && ohmycode --help`
+3. Reinstall: `cd <project_dir> && ./scripts/setup-cli.sh`
 4. Check Python version: `python3 --version` (needs 3.9+)
 
 ## Category 2: Provider / API Issues
@@ -154,7 +154,7 @@ print(find_project_instructions("."))
 ## General Debugging Tips
 
 - Add `--mode auto` to skip permission prompts during debugging
-- Run with `python3 -m ohmycode` instead of `ohmycode` for better error traces
+- Keep CLI-first workflow: run with `ohmycode` only
 - Check `python3 -m pytest tests/ -v` to verify nothing is broken
 - Read the error traceback bottom-up: the last frame is usually the cause
 - For async issues: look for "RuntimeError: Event loop" — usually means mixing sync/async

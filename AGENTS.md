@@ -22,11 +22,13 @@ Python 3.9+, asyncio, openai SDK, anthropic SDK, rich, prompt_toolkit, tiktoken,
 ## Run and test
 
 ```bash
-pip install -e ".[dev]"          # install
+./scripts/setup-cli.sh            # install + register CLI
 ohmycode                         # start REPL
 ohmycode -p "hello"              # single-shot prompt
 python3 -m pytest tests/ -v      # run tests (currently 72)
 ```
+
+CLI policy: always run via `ohmycode` command.
 
 ## Project knowledge (`agent_docs/`)
 

@@ -1,7 +1,13 @@
 <div align="center">
-  <h1>🐙 OhMyCode</h1>
-  <p><b>~3000 lines of Python. That's the entire thing.</b><br>
-  A fully-functional CC-style AI coding assistant you can read in an afternoon — and tell it to extend itself.</p>
+  <h1 style="display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; margin: 0.5em 0; line-height: 0;">
+    <img src="assets/octopus.png" alt="" width="100" height="100" style="display: block; align-self: center;">
+    <img src="assets/ohmycode.png" alt="OhMyCode" height="90" style="display: block; width: auto; align-self: center;">
+  </h1>
+  <p><b>Minimal and Customizable CC-Style Coding Agent</b></p>
+  <blockquote><i>
+    A fully-functional CC-style AI coding assistant you can read in an afternoon — and tell it to extend itself.<br>
+    <span style="color:#ec407a;font-style:italic;">"Oh My Code!!!"</span>
+  </i></blockquote>
   <p>
     <img src="https://img.shields.io/badge/python-≥3.9-blue" alt="Python">
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
@@ -13,31 +19,32 @@
 
 ## Why OhMyCode?
 
-**It's tiny.** OhMyCode delivers the CC-style coding assistant experience — streaming, tool use, context compression, memory — in ~3000 lines you fully own.
+🤏 **It's tiny.** OhMyCode delivers the CC-style coding assistant experience — streaming, tool use, context compression, memory — in ~3000 lines you fully own.
 
-**It extends itself.** Say "add a tool that does X" and it modifies its own source to build one. No plugin SDK, no API boundaries.
+🧬 **OhMyCode extends itself.** Tell **OhMyCode** to "add a tool that does X" and it edits *this* repo's source to build one — no plugin SDK, no API boundaries between you and the code.
 
 ## Highlights
 
-- **Self-Extending** — Ask the AI to add tools, providers, or skills; it modifies its own code to grow
-- **9 Built-in Tools** — Bash, Read, Edit, Write, Glob, Grep, WebFetch, WebSearch, Agent
-- **Multi-Provider** — OpenAI, Anthropic, Azure, or any OpenAI-compatible API
-- **Permission Pipeline** — `default` / `auto` / `plan` modes with rule-based control
-- **Smart Context** — Four-level compression keeps long conversations running
-- **Memory & Resume** — LLM-based memory extraction + `--resume` to pick up where you left off
-- **Skill System** — `SKILL.md` files guide the AI on specific tasks; autocomplete via `/skill-name`
-- **CC-Style UI** — Thinking spinner, tool panels, permission prompts, rich rendering
+- 🧩 **Minimal CC Core** — Streaming output, tool execution, permission modes, context compression, memory, and resume in ~3000 lines.
+- 🔧 **Deeply Customizable** — Add your own tools/providers/prompts or just ask OhMyCode to extend itself by editing its own source.
+- 🎒 **Skills Included** — Comes with practical built-in skills for add-tool, add-provider, add-feature, debugging, and workflow conventions.
+- 🌐 **Provider Flexibility** — Works with OpenAI, Anthropic, Azure, and OpenAI-compatible APIs.
 
 ## Install
 
 ```bash
 git clone <repo-url>
 cd OhMyCode
-pip install -e ".[dev]"
+./scripts/setup-cli.sh
 ```
 
 > [!TIP]
-> If `ohmycode` is not found, use `python3 -m ohmycode` or add pip's script directory to your PATH.
+> This project is CLI-first. Start it with `ohmycode` command only.
+> If command is still not found after setup, reload shell and verify:
+> `source ~/.zshrc && which ohmycode`
+>
+> `./scripts/setup-cli.sh` installs a stable global shim at `~/.local/bin/ohmycode`,
+> so it works consistently across different shell sessions and conda environments.
 
 ## Quick Start
 
@@ -46,6 +53,14 @@ ohmycode                        # interactive REPL
 ohmycode -p "Fix the bug"      # single-shot prompt
 ohmycode --resume               # resume last conversation
 ohmycode --mode plan            # read-only mode
+```
+
+Verify CLI wiring (recommended for agents and CI scripts):
+
+```bash
+pip3 show ohmycode | rg "Editable project location|Location"
+which ohmycode
+ohmycode --help
 ```
 
 ### REPL Commands
@@ -99,19 +114,17 @@ CLI overrides: `--provider`, `--model`, `--mode`, `--api-key`, `--base-url`.
 
 ## Built-in Tools
 
-| Tool | Safe | Description |
-|------|:----:|------------|
-| `bash` | ✗ | Shell commands with timeout |
-| `read` | ✓ | Read files with line range |
-| `edit` | ✗ | Find-and-replace (unique match) |
-| `write` | ✗ | Create/overwrite files |
-| `glob` | ✓ | Find files by pattern |
-| `grep` | ✓ | Regex search across files |
-| `web_fetch` | ✓ | Fetch URL → text |
-| `web_search` | ✓ | DuckDuckGo search |
-| `agent` | ✗ | Sub-agent (max depth 2) |
-
-> **Safe** = runs in parallel via `asyncio.gather()`. Mixed batches: safe first, then unsafe.
+| Tool | Description |
+|------|-------------|
+| `bash` | Shell commands with timeout |
+| `read` | Read files with line range |
+| `edit` | Find-and-replace (unique match) |
+| `write` | Create/overwrite files |
+| `glob` | Find files by pattern |
+| `grep` | Regex search across files |
+| `web_fetch` | Fetch URL → text |
+| `web_search` | DuckDuckGo search |
+| `agent` | Sub-agent (max depth 2) |
 
 ## Extending (or: Let It Extend Itself)
 

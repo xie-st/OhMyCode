@@ -18,6 +18,9 @@ from ohmycode.skills.loader import scan_skills, load_skill, SkillInfo
 
 console = Console()
 
+# CLI accent: warm pink (less magenta than ANSI bright_magenta); matches toolbar mode indicator
+ACCENT_PINK = "#ff6b9d"
+
 
 # ── Argument parsing ────────────────────────────────────────────────────────────
 
@@ -184,8 +187,8 @@ async def confirm_tool_call(tool_name: str, params: dict) -> str:
         params_preview = params_preview[:117] + "..."
 
     console.print()
-    console.print(f"  [bold yellow]⚠  Allow [cyan]{tool_name}[/cyan]?[/]")
-    console.print(f"  [dim]{params_preview}[/dim]")
+    console.print(f"  [bold yellow]⚠  Allow [{ACCENT_PINK}]{tool_name}[/]?[/]", highlight=False)
+    console.print(f"  [dim]{params_preview}[/dim]", highlight=False)
     console.print()
     console.print("  [bold]y[/][dim]es[/]  ·  [bold]n[/][dim]o[/]  ·  [bold]a[/][dim]lways[/]  ", end="")
 
@@ -249,7 +252,7 @@ async def render_stream(conv: ConversationLoop) -> str:
             if not text_printed:
                 # After tool calls: newline + bullet marker
                 if tool_count > 0:
-                    console.print(f"\n  [bright_magenta]●[/] ", end="", highlight=False)
+                    console.print(f"\n  [bold {ACCENT_PINK}]●[/] ", end="", highlight=False)
                 else:
                     console.print("  ", end="", highlight=False)
             # Add 4-space indent after each newline
@@ -267,7 +270,10 @@ async def render_stream(conv: ConversationLoop) -> str:
             params_str = json.dumps(event.params, ensure_ascii=False)
             if len(params_str) > 100:
                 params_str = params_str[:97] + "..."
-            console.print(f"\n    [cyan]▸[/] [bold]{tool_display}[/]  [dim]{params_str}[/]")
+            console.print(
+                f"\n    [bold {ACCENT_PINK}]▸[/] [bold]{tool_display}[/]  [dim]{params_str}[/]",
+                highlight=False,
+            )
             tool_count += 1
 
         elif isinstance(event, ToolCallResult):
@@ -284,9 +290,9 @@ async def render_stream(conv: ConversationLoop) -> str:
                 output = "\n".join("    " + l for l in output.splitlines())
 
             if event.is_error:
-                console.print(f"    [red]✗[/] [red]{output}[/]")
+                console.print(f"    [red]✗[/] [red]{output}[/]", highlight=False)
             else:
-                console.print(f"    [green]✓[/]\n[dim]{output}[/]")
+                console.print(f"    [green]✓[/]\n[dim]{output}[/]", highlight=False)
 
         elif isinstance(event, TurnComplete):
             finish_reason = event.finish_reason
@@ -347,7 +353,7 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
         else:
             console.print("[yellow]No conversation found to resume.[/yellow]\n")
 
-    # Welcome banner with magenta border
+    # Welcome banner with pink accent border
     import shutil as _shutil
     import os as _os
     _tw = _shutil.get_terminal_size().columns
@@ -358,7 +364,7 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
     from rich import box as rich_box
 
     # Pac-man ghost–style pixel mascot
-    p = "bright_magenta"  # Same as border color
+    p = ACCENT_PINK  # Same as border color
     _wide_line_gap = _os.environ.get("TERM_PROGRAM") == "Apple_Terminal"
 
     def _octopus() -> Text:
@@ -394,25 +400,30 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
     right_info.append(f"{len(available_skills)} skills available", style="dim")
 
     banner_table = Table(show_header=False, show_edge=False, show_lines=False,
-                         padding=(0, 1), expand=True, box=None)
+                         padding=(1, 1), expand=True, box=None)
     banner_table.add_column(width=16, no_wrap=True)
     banner_table.add_column(ratio=1)
 
     banner_table.add_row(_octopus(), right_info)
 
-    # Wrap in rounded magenta border
+    # Wrap in rounded pink border
     banner = Panel(
         banner_table,
-        title="[bold bright_magenta]◆ OhMyCode[/] [dim]v0.1.0[/]",
+        title=f"[bold {ACCENT_PINK}]◆ OhMyCode[/] [dim]v0.1.0[/]",
         title_align="left",
-        border_style="bright_magenta",
+        border_style=ACCENT_PINK,
         box=rich_box.ROUNDED,
-        padding=(0, 2),
+        # Rich 2-tuple padding is (top, right) mirrored to (top, right, bottom, left); was (0,2) → no vertical pad
+        padding=(2, 2),
     )
     console.print()
     console.print(banner)
     console.print()
-    console.print(f"  [dim]Type[/] [bold]/skills[/] [dim]for commands ·[/] [bold]/status[/] [dim]for context usage ·[/] [bold]/exit[/] [dim]to quit ·[/] [bold]Ctrl+C[/] [dim]to cancel[/]")
+    console.print(
+        f"  [dim]Type[/] [bold {ACCENT_PINK}]/skills[/] [dim]for commands ·[/] "
+        f"[bold {ACCENT_PINK}]/status[/] [dim]for context usage ·[/] [bold {ACCENT_PINK}]/exit[/] "
+        f"[dim]to quit ·[/] [bold]Ctrl+C[/] [dim]to cancel[/]"
+    )
     console.print()
 
     # Try prompt_toolkit; fall back to input()
@@ -468,9 +479,9 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
             # Completion menu
             "completion-menu": "noinherit",
             "completion-menu.completion": "noinherit fg:#bbbbbb",
-            "completion-menu.completion.current": "noinherit noreverse fg:ansibrightmagenta bold",
+            "completion-menu.completion.current": f"noinherit noreverse fg:{ACCENT_PINK} bold",
             "completion-menu.meta.completion": "noinherit fg:#666666",
-            "completion-menu.meta.completion.current": "noinherit noreverse fg:ansibrightmagenta",
+            "completion-menu.meta.completion.current": f"noinherit noreverse fg:{ACCENT_PINK}",
             "scrollbar.background": "noinherit",
             "scrollbar.button": "noinherit",
             # Input area
@@ -478,7 +489,7 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
             "separator": "fg:#444444",
             "bottom-toolbar": "bg:default fg:default noreverse",
             "bottom-toolbar.text": "noreverse",
-            "mode-indicator": "fg:#ff6b9d bold",
+            "mode-indicator": f"fg:{ACCENT_PINK} bold",
             "mode-text": "fg:#888888",
             "tool-count": "fg:#00d4aa",
             "hint": "fg:#555555",
