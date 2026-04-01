@@ -1,0 +1,764 @@
+"""CLI entry: REPL and one-shot prompt mode, rich streaming output."""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+from rich.console import Console
+
+from ohmycode.config.config import load_config, OhMyCodeConfig
+from ohmycode.core.loop import ConversationLoop
+from ohmycode.core.messages import TextChunk, ToolCallStart, ToolCallResult, TurnComplete
+from ohmycode.skills.loader import scan_skills, load_skill, SkillInfo
+
+console = Console()
+
+
+# ── Argument parsing ────────────────────────────────────────────────────────────
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="ohmycode",
+        description="OhMyCode — a minimal AI coding assistant",
+    )
+    parser.add_argument(
+        "-p", "--prompt",
+        metavar="PROMPT",
+        help="Run a single prompt and exit (non-interactive mode).",
+    )
+    parser.add_argument(
+        "--provider",
+        metavar="PROVIDER",
+        help="LLM provider name (e.g. openai).",
+    )
+    parser.add_argument(
+        "--model",
+        metavar="MODEL",
+        help="Model name (e.g. gpt-4o).",
+    )
+    parser.add_argument(
+        "--mode",
+        metavar="MODE",
+        choices=["default", "auto", "plan"],
+        help="Permission mode: default | auto | plan.",
+    )
+    parser.add_argument(
+        "--api-key",
+        metavar="KEY",
+        dest="api_key",
+        help="API key for the provider.",
+    )
+    parser.add_argument(
+        "--base-url",
+        metavar="URL",
+        dest="base_url",
+        help="Custom base URL for the provider API.",
+    )
+    parser.add_argument(
+        "--resume",
+        nargs="?",
+        const="",
+        default=None,
+        help="Resume a previous conversation",
+    )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        default=None,
+        help="Subcommand: vchange [-N|N]",
+    )
+    parser.add_argument(
+        "command_arg",
+        nargs="?",
+        default=None,
+        help="Argument for subcommand",
+    )
+    return parser.parse_args(argv)
+
+
+# ── Version switch (vchange) ──────────────────────────────────────────────────
+
+
+def run_vchange(step: int | None = None) -> int:
+    """Version switch: step=None shows status, step=-1 goes back, step=1 goes forward. Returns exit code."""
+    import os
+    import subprocess
+
+    cwd = os.getcwd()
+
+    # Check git
+    r = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
+                       capture_output=True, text=True, cwd=cwd)
+    if r.returncode != 0:
+        console.print("[red]Not in a git repository.[/red]")
+        return 1
+
+    if step is None:
+        # Show current position
+        log = subprocess.run(["git", "log", "--oneline", "-5"],
+                             capture_output=True, text=True, cwd=cwd)
+        head = subprocess.run(["git", "rev-parse", "HEAD"],
+                              capture_output=True, text=True, cwd=cwd).stdout.strip()
+        console.print(f"\n  [bold]Recent commits:[/]")
+        for line in log.stdout.strip().splitlines():
+            sha = line.split()[0]
+            if head.startswith(sha):
+                console.print(f"    [green]▸ {line}[/]  [green]← HEAD[/]")
+            else:
+                console.print(f"    [dim]  {line}[/]")
+        console.print(f"\n  [dim]Usage: ohmycode vchange -1 (back) / ohmycode vchange 1 (forward)[/]")
+        return 0
+
+    if step == 0:
+        console.print("[dim]Nothing to do.[/dim]")
+        return 0
+
+    # Full commit history on main (oldest to newest)
+    all_log = subprocess.run(["git", "log", "main", "--oneline", "--reverse"],
+                             capture_output=True, text=True, cwd=cwd)
+    all_commits = all_log.stdout.strip().splitlines()
+    if not all_commits:
+        console.print("[yellow]No commits found.[/yellow]")
+        return 1
+
+    head_sha = subprocess.run(["git", "rev-parse", "HEAD"],
+                              capture_output=True, text=True, cwd=cwd).stdout.strip()
+    current_idx = -1
+    for i, line in enumerate(all_commits):
+        sha = line.split()[0]
+        if head_sha.startswith(sha):
+            current_idx = i
+            break
+
+    if current_idx == -1:
+        console.print("[yellow]HEAD is not on main branch history.[/yellow]")
+        return 1
+
+    target_idx = current_idx + step
+    if target_idx < 0:
+        console.print("[yellow]Already at the oldest commit. Cannot go back further.[/yellow]")
+        return 1
+    if target_idx >= len(all_commits):
+        console.print("[yellow]Already at the latest commit. Cannot go forward.[/yellow]")
+        return 1
+
+    target_line = all_commits[target_idx]
+    target_sha = target_line.split()[0]
+
+    console.print(f"\n  [bold]Current:[/] {all_commits[current_idx]}")
+    console.print(f"  [bold]Target: [/] {target_line}")
+
+    # Warn about uncommitted changes
+    status = subprocess.run(["git", "status", "--porcelain"],
+                            capture_output=True, text=True, cwd=cwd)
+    if status.stdout.strip():
+        n = len(status.stdout.strip().splitlines())
+        console.print(f"  [yellow]Warning: {n} uncommitted change{'s' if n > 1 else ''} will be lost[/yellow]")
+
+    console.print("  [bold]Confirm? (y/n):[/bold] ", end="")
+    answer = input().strip().lower()
+    if answer == "y":
+        subprocess.run(["git", "checkout", target_sha, "--force"],
+                       capture_output=True, text=True, cwd=cwd)
+        console.print(f"  [green]✓ Switched to: {target_line}[/green]")
+        console.print("  [dim]Restart ohmycode to load the changed code.[/dim]")
+        return 0
+    else:
+        console.print("  [dim]Cancelled.[/dim]")
+        return 0
+
+
+# ── Tool confirmation ───────────────────────────────────────────────────────────
+
+
+async def confirm_tool_call(tool_name: str, params: dict) -> str:
+    """Show tool call details to the user and read y/n/a response."""
+    params_preview = json.dumps(params, ensure_ascii=False)
+    if len(params_preview) > 120:
+        params_preview = params_preview[:117] + "..."
+
+    console.print()
+    console.print(f"  [bold yellow]⚠  Allow [cyan]{tool_name}[/cyan]?[/]")
+    console.print(f"  [dim]{params_preview}[/dim]")
+    console.print()
+    console.print("  [bold]y[/][dim]es[/]  ·  [bold]n[/][dim]o[/]  ·  [bold]a[/][dim]lways[/]  ", end="")
+
+    loop = asyncio.get_event_loop()
+    try:
+        answer = await loop.run_in_executor(None, sys.stdin.readline)
+        return answer.strip().lower()[:1] or "n"
+    except (EOFError, KeyboardInterrupt):
+        return "n"
+
+
+# ── Stream rendering ──────────────────────────────────────────────────────────
+
+
+async def render_stream(conv: ConversationLoop) -> str:
+    """Consume run_turn() event stream, render to terminal, return finish_reason."""
+    import time
+
+    finish_reason = "stop"
+    text_printed = False
+    tool_count = 0
+
+    # ── "Thinking" spinner (write to sys.stdout directly, not rich.Live) ──
+    SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    thinking = True
+    t_start = time.monotonic()
+    spinner_task = None
+
+    async def _spinner():
+        idx = 0
+        try:
+            while True:
+                elapsed = time.monotonic() - t_start
+                frame = SPINNER_FRAMES[idx % len(SPINNER_FRAMES)]
+                # \r to start of line, \033[K clear to end of line
+                sys.stdout.write(f"\r  \033[2m{frame} Thinking... {elapsed:.0f}s\033[0m\033[K")
+                sys.stdout.flush()
+                idx += 1
+                await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            # Clear spinner line
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
+
+    spinner_task = asyncio.create_task(_spinner())
+
+    async for event in conv.run_turn():
+        # Stop spinner when first real event arrives
+        if thinking:
+            thinking = False
+            if spinner_task and not spinner_task.done():
+                spinner_task.cancel()
+                try:
+                    await spinner_task
+                except asyncio.CancelledError:
+                    pass
+
+        if isinstance(event, TextChunk):
+            # Stream print with indent
+            text = event.text
+            if not text_printed:
+                # After tool calls: newline + bullet marker
+                if tool_count > 0:
+                    console.print(f"\n  [bright_magenta]●[/] ", end="", highlight=False)
+                else:
+                    console.print("  ", end="", highlight=False)
+            # Add 4-space indent after each newline
+            text = text.replace("\n", "\n    ")
+            console.print(text, end="", highlight=False)
+            text_printed = True
+
+        elif isinstance(event, ToolCallStart):
+            if text_printed:
+                console.print()  # Newline to separate from text
+                text_printed = False
+
+            # Show tool call in a compact format
+            tool_display = event.tool_name
+            params_str = json.dumps(event.params, ensure_ascii=False)
+            if len(params_str) > 100:
+                params_str = params_str[:97] + "..."
+            console.print(f"\n    [cyan]▸[/] [bold]{tool_display}[/]  [dim]{params_str}[/]")
+            tool_count += 1
+
+        elif isinstance(event, ToolCallResult):
+            output = event.result
+            max_lines = 10
+            lines = output.splitlines()
+            # Indent each line by 4 spaces
+            if len(lines) > max_lines:
+                indented = "\n".join("    " + l for l in lines[:max_lines])
+                output = indented + f"\n    [dim]... ({len(lines)} lines total)[/dim]"
+            else:
+                if len(output) > 500:
+                    output = output[:497] + "..."
+                output = "\n".join("    " + l for l in output.splitlines())
+
+            if event.is_error:
+                console.print(f"    [red]✗[/] [red]{output}[/]")
+            else:
+                console.print(f"    [green]✓[/]\n[dim]{output}[/]")
+
+        elif isinstance(event, TurnComplete):
+            finish_reason = event.finish_reason
+            if text_printed:
+                console.print()  # Final newline
+                text_printed = False
+            u = event.usage
+            elapsed = time.monotonic() - t_start
+            # Stats line: tool count · tokens · elapsed
+            stats_parts = []
+            if tool_count > 0:
+                stats_parts.append(f"{tool_count} tool use{'s' if tool_count > 1 else ''}")
+            if u.total_tokens > 0:
+                stats_parts.append(f"{u.total_tokens:,} tokens")
+            stats_parts.append(f"{elapsed:.1f}s")
+            console.print(f"\n  [dim]{' · '.join(stats_parts)}[/dim]")
+            tool_count = 0
+
+    return finish_reason
+
+
+# ── One-shot prompt mode ─────────────────────────────────────────────────────
+
+
+async def run_single(prompt: str, config_overrides: dict[str, Any]) -> int:
+    """Run a single prompt then exit; returns exit code."""
+    config = load_config(config_overrides)
+    conv = ConversationLoop(config=config, confirm_fn=confirm_tool_call)
+    conv.initialize()
+    conv.add_user_message(prompt)
+
+    try:
+        finish_reason = await render_stream(conv)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted.[/yellow]")
+        return 130
+
+    return 0
+
+
+# ── REPL mode ─────────────────────────────────────────────────────────────────
+
+
+async def run_repl(config_overrides: dict[str, Any]) -> int:
+    """Interactive REPL loop; supports /exit, /clear, /mode, etc."""
+    config = load_config(config_overrides)
+    conv = ConversationLoop(config=config, confirm_fn=confirm_tool_call)
+    conv.initialize()
+    available_skills = scan_skills()
+
+    # Resume conversation
+    if "_resume" in config_overrides and config_overrides["_resume"] is not None:
+        from ohmycode.storage.conversation import load_conversation
+        result = load_conversation(config_overrides.get("_resume", ""))
+        if result:
+            conv.messages, metadata = result
+            console.print(f"[dim]Resumed conversation from {metadata.get('created_at', 'unknown')}[/dim]\n")
+        else:
+            console.print("[yellow]No conversation found to resume.[/yellow]\n")
+
+    # Welcome banner with magenta border
+    import shutil as _shutil
+    import os as _os
+    _tw = _shutil.get_terminal_size().columns
+
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
+    from rich import box as rich_box
+
+    # Pac-man ghost–style pixel mascot
+    p = "bright_magenta"  # Same as border color
+    _wide_line_gap = _os.environ.get("TERM_PROGRAM") == "Apple_Terminal"
+
+    def _octopus() -> Text:
+        """Build Pac-man ghost–style mascot, adapting to terminal line spacing."""
+        t = Text()
+        if _wide_line_gap:
+            bg = f"on {p}"
+            s = f"{p} {bg}"
+            t.append(" ▄██████▄\n", style=p)
+            t.append("██████████\n", style=s)
+            t.append("██", style=s); t.append(" ", style=""); t.append("████", style=s); t.append(" ", style=""); t.append("██\n", style=s)
+            t.append("█▀█▀██▀█▀█", style=p)
+        else:
+            t.append(" ▄██████▄\n", style=p)
+            t.append("██████████\n", style=p)
+            t.append("██", style=p); t.append(" ", style=""); t.append("████", style=p); t.append(" ", style=""); t.append("██\n", style=p)
+            t.append("█▀█▀██▀█▀█", style=p)
+        return t
+
+    # Two columns: mascot left, info right
+    cwd_display = _os.getcwd()
+    home = str(Path.home())
+    if cwd_display.startswith(home):
+        cwd_display = "~" + cwd_display[len(home):]
+
+    import re
+    model_display = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", config.model)
+
+    right_info = Text()
+    right_info.append(f"{model_display}\n", style="bold")
+    right_info.append(f"Mode: ", style="dim")
+    right_info.append(f"{config.mode}\n", style="green")
+    right_info.append(f"{len(available_skills)} skills available", style="dim")
+
+    banner_table = Table(show_header=False, show_edge=False, show_lines=False,
+                         padding=(0, 1), expand=True, box=None)
+    banner_table.add_column(width=16, no_wrap=True)
+    banner_table.add_column(ratio=1)
+
+    banner_table.add_row(_octopus(), right_info)
+
+    # Wrap in rounded magenta border
+    banner = Panel(
+        banner_table,
+        title="[bold bright_magenta]◆ OhMyCode[/] [dim]v0.1.0[/]",
+        title_align="left",
+        border_style="bright_magenta",
+        box=rich_box.ROUNDED,
+        padding=(0, 2),
+    )
+    console.print()
+    console.print(banner)
+    console.print()
+    console.print(f"  [dim]Type[/] [bold]/skills[/] [dim]for commands ·[/] [bold]/status[/] [dim]for context usage ·[/] [bold]/exit[/] [dim]to quit ·[/] [bold]Ctrl+C[/] [dim]to cancel[/]")
+    console.print()
+
+    # Try prompt_toolkit; fall back to input()
+    use_prompt_toolkit = False
+    pt_session = None
+    try:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.history import FileHistory
+        from prompt_toolkit.completion import Completer, Completion
+        from prompt_toolkit.formatted_text import HTML
+        from prompt_toolkit.styles import Style as PTStyle
+
+        def _truncate(text: str, max_len: int = 50) -> str:
+            return text[:max_len - 1] + "…" if len(text) > max_len else text
+
+        class SlashCompleter(Completer):
+            _BUILTIN = {
+                "/exit": "Quit",
+                "/clear": "Clear conversation",
+                "/mode": "Switch mode (default|auto|plan)",
+                "/status": "Show context and session status",
+                "/memory": "Manage memories",
+                "/vchange": "Version switch (-1 back / 1 forward)",
+                "/skills": "List all skills",
+            }
+
+            def __init__(self, skills: dict[str, SkillInfo]) -> None:
+                self._skills = skills
+
+            def get_completions(self, document, complete_event):
+                text = document.text_before_cursor
+                if not text.startswith("/"):
+                    return
+                offset = len(text)
+                for cmd, desc in self._BUILTIN.items():
+                    if cmd.startswith(text):
+                        yield Completion(
+                            cmd, start_position=-offset,
+                            display=HTML(f"<b>{cmd}</b>"),
+                            display_meta=desc,
+                        )
+                for skill_name, info in sorted(self._skills.items()):
+                    full = f"/{skill_name}"
+                    if full.startswith(text):
+                        yield Completion(
+                            full, start_position=-offset,
+                            display=HTML(f"<ansicyan>{full}</ansicyan>"),
+                            display_meta=_truncate(info.description),
+                        )
+
+        # prompt_toolkit styles
+        pt_style = PTStyle.from_dict({
+            # Completion menu
+            "completion-menu": "noinherit",
+            "completion-menu.completion": "noinherit fg:#bbbbbb",
+            "completion-menu.completion.current": "noinherit noreverse fg:ansibrightmagenta bold",
+            "completion-menu.meta.completion": "noinherit fg:#666666",
+            "completion-menu.meta.completion.current": "noinherit noreverse fg:ansibrightmagenta",
+            "scrollbar.background": "noinherit",
+            "scrollbar.button": "noinherit",
+            # Input area
+            "prompt": "fg:#888888",
+            "separator": "fg:#444444",
+            "bottom-toolbar": "bg:default fg:default noreverse",
+            "bottom-toolbar.text": "noreverse",
+            "mode-indicator": "fg:#ff6b9d bold",
+            "mode-text": "fg:#888888",
+            "tool-count": "fg:#00d4aa",
+            "hint": "fg:#555555",
+        })
+
+        # Terminal width
+        import shutil
+        _term_width = shutil.get_terminal_size().columns
+
+        def _get_toolbar():
+            """Bottom toolbar: mode · context · skill count · hint"""
+            from prompt_toolkit.formatted_text import FormattedText
+            mode_label = current_mode
+            tool_total = len(available_skills)
+            status = conv.get_status_snapshot()
+            context_label = f"{status['usage_percent']:.1f}% ctx"
+            parts = [
+                ("class:mode-indicator", "  ▸▸ "),
+                ("class:mode-text", f"{mode_label} mode"),
+                ("class:hint", " · "),
+                ("class:tool-count", context_label),
+                ("class:hint", " · "),
+                ("class:tool-count", f"{tool_total}"),
+                ("class:mode-text", f" skill{'s' if tool_total != 1 else ''}"),
+                ("class:hint", " · "),
+                ("class:hint", "↓ to complete"),
+            ]
+            return FormattedText(parts)
+
+        def _get_prompt():
+            """Prompt: separator line + ❯"""
+            from prompt_toolkit.formatted_text import FormattedText
+            sep = "─" * _term_width
+            return FormattedText([
+                ("class:separator", sep + "\n"),
+                ("", "❯  "),
+            ])
+
+        from prompt_toolkit.filters import Condition
+
+        history_dir = Path.home() / ".ohmycode"
+        history_dir.mkdir(parents=True, exist_ok=True)
+        history_path = str(history_dir / "history")
+
+        _completer = SlashCompleter(available_skills)
+
+        pt_session = PromptSession(
+            history=FileHistory(history_path),
+            completer=_completer,
+            style=pt_style,
+            complete_while_typing=Condition(
+                lambda: (
+                    pt_session.app.current_buffer.text.startswith("/")
+                    and " " not in pt_session.app.current_buffer.text
+                )
+            ),
+            bottom_toolbar=_get_toolbar,
+            prompt_continuation="   ",
+        )
+        use_prompt_toolkit = True
+    except ImportError:
+        pass
+
+    async def _read_line() -> str | None:
+        if use_prompt_toolkit and pt_session is not None:
+            try:
+                return await pt_session.prompt_async(_get_prompt)
+            except (EOFError, KeyboardInterrupt):
+                return None
+        else:
+            loop = asyncio.get_event_loop()
+            try:
+                line = await loop.run_in_executor(None, lambda: input("❯ "))
+                return line
+            except (EOFError, KeyboardInterrupt):
+                return None
+
+    current_mode = config.mode
+
+    while True:
+        try:
+            user_input = await _read_line()
+        except KeyboardInterrupt:
+            console.print("\n[yellow](Use /exit to quit)[/yellow]")
+            continue
+
+        if user_input is None:
+            # EOF
+            console.print("\n[dim]Goodbye.[/dim]")
+            break
+
+        user_input = user_input.strip()
+        if not user_input:
+            continue
+
+        # ── Slash commands ───────────────────────────────────────────────
+        if user_input.startswith("/"):
+            parts = user_input.split(maxsplit=1)
+            cmd = parts[0].lower()
+
+            if cmd == "/exit":
+                console.print("[dim]Goodbye.[/dim]")
+                if conv.messages:
+                    from ohmycode.storage.conversation import save_conversation
+                    save_conversation(conv.messages, config.provider, config.model, config.mode)
+                    console.print(f"[dim]Conversation saved.[/dim]")
+                # Memory extraction (silent failure)
+                if conv.messages and conv._provider:
+                    try:
+                        from ohmycode.memory.memory import extract_memories_from_conversation, save_memory
+                        memories = await extract_memories_from_conversation(
+                            conv.messages, conv._provider, config.model
+                        )
+                        for m in memories:
+                            save_memory(m["name"], m["type"], m["content"])
+                    except Exception:
+                        pass
+                return 0
+
+            elif cmd == "/clear":
+                conv.messages.clear()
+                conv.auto_approved.clear()
+                console.print("[dim]Conversation cleared.[/dim]")
+                continue
+
+            elif cmd == "/mode":
+                if len(parts) < 2:
+                    console.print(f"[dim]Current mode: {current_mode}[/dim]")
+                    console.print("[dim]Usage: /mode <default|auto|plan>[/dim]")
+                else:
+                    new_mode = parts[1].strip()
+                    if new_mode not in ("default", "auto", "plan"):
+                        console.print(f"[red]Unknown mode: {new_mode}[/red]")
+                    else:
+                        current_mode = new_mode
+                        # Rebuild config and loop to apply new mode
+                        new_overrides = dict(config_overrides)
+                        new_overrides["mode"] = current_mode
+                        config = load_config(new_overrides)
+                        conv = ConversationLoop(
+                            config=config, confirm_fn=confirm_tool_call
+                        )
+                        conv.initialize()
+                        console.print(f"[dim]Mode switched to: {current_mode}[/dim]")
+                continue
+
+            elif cmd == "/status":
+                status = conv.get_status_snapshot()
+                console.print()
+                console.print("  [bold]Session status[/]")
+                console.print(
+                    f"    [dim]Model:[/] {status['provider']} / {status['model']}    "
+                    f"[dim]Mode:[/] {status['mode']}"
+                )
+                console.print(
+                    f"    [dim]Messages:[/] {status['message_count']}    "
+                    f"[dim]Context:[/] {status['used_tokens']:,} / {status['effective_window']:,} tokens "
+                    f"([bold]{status['usage_percent']:.1f}%[/])"
+                )
+                console.print(
+                    f"    [dim]Budget:[/] {status['token_budget']:,} total, "
+                    f"{status['output_reserved']:,} reserved for output"
+                )
+                console.print(
+                    f"    [dim]Compression stage:[/] {status['compression_stage']}"
+                )
+                console.print()
+                continue
+
+            elif user_input.startswith("/memory"):
+                parts = user_input.split(maxsplit=2)
+                from ohmycode.memory.memory import list_memories, delete_memory
+                if len(parts) == 1 or parts[1] == "list":
+                    memories = list_memories()
+                    if memories:
+                        for m in memories:
+                            console.print(f"  [{m['type']}] {m['name']} ({m['filename']})")
+                    else:
+                        console.print("[dim]No memories saved.[/dim]")
+                elif parts[1] == "delete" and len(parts) > 2:
+                    if delete_memory(parts[2]):
+                        console.print(f"[dim]Deleted {parts[2]}[/dim]")
+                    else:
+                        console.print(f"[yellow]Memory not found: {parts[2]}[/yellow]")
+                continue
+
+            elif cmd == "/vchange":
+                arg = parts[1].strip() if len(parts) > 1 else None
+                step = None
+                if arg is not None:
+                    try:
+                        step = int(arg)
+                    except ValueError:
+                        console.print("[red]Usage: /vchange [-N|N]  (e.g. /vchange -1)[/red]")
+                        continue
+                run_vchange(step)
+                continue
+
+            elif cmd == "/skills":
+                if available_skills:
+                    console.print("\n  [bold]Available skills:[/]")
+                    # Longest skill name for column alignment
+                    max_name = max(len(s) for s in available_skills) + 1
+                    for skill_name, info in sorted(available_skills.items()):
+                        padded = f"/{skill_name}".ljust(max_name + 1)
+                        desc = info.description
+                        # Truncate description to 60 chars
+                        if len(desc) > 60:
+                            desc = desc[:57] + "..."
+                        console.print(f"    [cyan]{padded}[/] [dim]{desc}[/]")
+                    console.print()
+                else:
+                    console.print("[dim]No skills found.[/dim]")
+                continue
+
+            else:
+                skill_name = cmd.lstrip("/")
+                if skill_name in available_skills:
+                    arguments = parts[1] if len(parts) > 1 else ""
+                    skill_content = load_skill(available_skills[skill_name], arguments=arguments)
+                    conv.add_user_message(skill_content)
+                    try:
+                        finish_reason = await render_stream(conv)
+                        if finish_reason == "max_turns":
+                            console.print("[yellow]Reached maximum turns limit.[/yellow]")
+                    except KeyboardInterrupt:
+                        conv.cancel()
+                        console.print("\n[yellow](Generation cancelled. Continue or /exit)[/yellow]")
+                else:
+                    console.print(f"[red]Unknown command: {cmd}[/red]")
+                    console.print("[dim]Available: /exit /clear /mode /status /memory /skills[/dim]")
+                continue
+
+        # ── Normal user message ──────────────────────────────────────────
+        conv.add_user_message(user_input)
+
+        gen_task: asyncio.Task | None = None
+        try:
+            finish_reason = await render_stream(conv)
+            if finish_reason == "max_turns":
+                console.print(
+                    "[yellow]Reached maximum turns limit.[/yellow]"
+                )
+        except KeyboardInterrupt:
+            conv.cancel()
+            console.print("\n[yellow](Generation cancelled. Continue or /exit)[/yellow]")
+
+    return 0
+
+
+# ── Main entry ────────────────────────────────────────────────────────────────
+
+
+def run() -> int:
+    """CLI main: parse args, run run_single, run_repl, or subcommands."""
+    args = parse_args()
+
+    # Subcommand: ohmycode vchange [-1|1|...]
+    if args.command == "vchange":
+        step = None
+        if args.command_arg is not None:
+            try:
+                step = int(args.command_arg)
+            except ValueError:
+                console.print("[red]Usage: ohmycode vchange [-N|N]  (e.g. ohmycode vchange -1)[/red]")
+                return 1
+        return run_vchange(step)
+
+    config_overrides: dict[str, Any] = {
+        "provider": args.provider,
+        "model": args.model,
+        "mode": args.mode,
+        "api_key": args.api_key,
+        "base_url": args.base_url,
+    }
+
+    if args.resume is not None:
+        config_overrides["_resume"] = args.resume
+
+    if args.prompt:
+        return asyncio.run(run_single(args.prompt, config_overrides))
+    else:
+        return asyncio.run(run_repl(config_overrides))
