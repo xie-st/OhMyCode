@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console
+from rich.markup import escape
 from rich.text import Text
 
 from ohmycode.config.config import load_config, OhMyCodeConfig
@@ -19,8 +20,8 @@ from ohmycode.skills.loader import scan_skills, load_skill, SkillInfo
 
 console = Console()
 
-# CLI accent: warm pink (less magenta than ANSI bright_magenta); matches toolbar mode indicator
-ACCENT_PINK = "#ff6b9d"
+# CLI accent: warm orange; matches toolbar mode indicator
+ACCENT = "#ff6b9d"
 
 # Claw-style block letters (cf. claw-cli startup_banner): merged rows, no multi-line pixel sprite.
 # Second letter is explicit H (middle bar on row 3: ███████║), not U-shaped.
@@ -78,9 +79,9 @@ def _build_repl_welcome_text(
 ) -> Text:
     """Claw-inspired: big block letters + subtitle + aligned meta rows."""
     t = Text()
-    t.append(_OHMY_BLOCK_LINES, style=ACCENT_PINK)
+    t.append(_OHMY_BLOCK_LINES, style=ACCENT)
     t.append("  ")
-    t.append("Code", style=f"bold {ACCENT_PINK}")
+    t.append("Code", style=f"bold {ACCENT}")
     t.append(" v0.1.0\n\n", style="dim")
     label_w = 12
     t.append("Model".ljust(label_w), style="dim")
@@ -257,8 +258,8 @@ async def confirm_tool_call(tool_name: str, params: dict) -> str:
         params_preview = params_preview[:117] + "..."
 
     console.print()
-    console.print(f"  [bold yellow]⚠  Allow [{ACCENT_PINK}]{tool_name}[/]?[/]", highlight=False)
-    console.print(f"  [dim]{params_preview}[/dim]", highlight=False)
+    console.print(f"  [bold yellow]⚠  Allow [{ACCENT}]{escape(tool_name)}[/]?[/]", highlight=False)
+    console.print(f"  [dim]{escape(params_preview)}[/dim]", highlight=False)
     console.print()
     console.print("  [bold]y[/][dim]es[/]  ·  [bold]n[/][dim]o[/]  ·  [bold]a[/][dim]lways[/]  ", end="")
 
@@ -322,7 +323,7 @@ async def render_stream(conv: ConversationLoop) -> str:
             if not text_printed:
                 # After tool calls: newline + bullet marker
                 if tool_count > 0:
-                    console.print(f"\n  [bold {ACCENT_PINK}]●[/] ", end="", highlight=False)
+                    console.print(f"\n  [bold {ACCENT}]●[/] ", end="", highlight=False)
                 else:
                     console.print("  ", end="", highlight=False)
             # Add 4-space indent after each newline
@@ -341,23 +342,25 @@ async def render_stream(conv: ConversationLoop) -> str:
             if len(params_str) > 100:
                 params_str = params_str[:97] + "..."
             console.print(
-                f"\n    [bold {ACCENT_PINK}]▸[/] [bold]{tool_display}[/]  [dim]{params_str}[/]",
+                f"\n    [bold {ACCENT}]▸[/] [bold]{escape(tool_display)}[/]  [dim]{escape(params_str)}[/]",
                 highlight=False,
             )
             tool_count += 1
 
         elif isinstance(event, ToolCallResult):
-            output = event.result
+            raw = event.result
             max_lines = 10
-            lines = output.splitlines()
-            # Indent each line by 4 spaces
+            lines = raw.splitlines()
+            # Indent each line by 4 spaces; escape so tool output cannot break Rich markup
             if len(lines) > max_lines:
                 indented = "\n".join("    " + l for l in lines[:max_lines])
-                output = indented + f"\n    [dim]... ({len(lines)} lines total)[/dim]"
+                output = escape(indented) + f"\n    [dim]... ({len(lines)} lines total)[/dim]"
             else:
-                if len(output) > 500:
-                    output = output[:497] + "..."
-                output = "\n".join("    " + l for l in output.splitlines())
+                body = raw
+                if len(body) > 500:
+                    body = body[:497] + "..."
+                body = "\n".join("    " + l for l in body.splitlines())
+                output = escape(body)
 
             if event.is_error:
                 console.print(f"    [red]✗[/] [red]{output}[/]", highlight=False)
@@ -438,9 +441,9 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
 
     banner = Panel(
         welcome_body,
-        title=f"[bold {ACCENT_PINK}]◆ OhMyCode[/]",
+        title=f"[bold {ACCENT}]◆ OhMyCode[/]",
         title_align="left",
-        border_style=ACCENT_PINK,
+        border_style=ACCENT,
         box=rich_box.ROUNDED,
         padding=(2, 2),
     )
@@ -448,8 +451,8 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
     console.print(banner)
     console.print()
     console.print(
-        f"  [dim]Type[/] [bold {ACCENT_PINK}]/skills[/] [dim]for commands ·[/] "
-        f"[bold {ACCENT_PINK}]/status[/] [dim]for context usage ·[/] [bold {ACCENT_PINK}]/exit[/] "
+        f"  [dim]Type[/] [bold {ACCENT}]/skills[/] [dim]for commands ·[/] "
+        f"[bold {ACCENT}]/status[/] [dim]for context usage ·[/] [bold {ACCENT}]/exit[/] "
         f"[dim]to quit ·[/] [bold]Ctrl+C[/] [dim]to cancel[/]"
     )
     console.print()
@@ -507,9 +510,9 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
             # Completion menu
             "completion-menu": "noinherit",
             "completion-menu.completion": "noinherit fg:#bbbbbb",
-            "completion-menu.completion.current": f"noinherit noreverse fg:{ACCENT_PINK} bold",
+            "completion-menu.completion.current": f"noinherit noreverse fg:{ACCENT} bold",
             "completion-menu.meta.completion": "noinherit fg:#666666",
-            "completion-menu.meta.completion.current": f"noinherit noreverse fg:{ACCENT_PINK}",
+            "completion-menu.meta.completion.current": f"noinherit noreverse fg:{ACCENT}",
             "scrollbar.background": "noinherit",
             "scrollbar.button": "noinherit",
             # Input area
@@ -517,7 +520,7 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
             "separator": "fg:#444444",
             "bottom-toolbar": "bg:default fg:default noreverse",
             "bottom-toolbar.text": "noreverse",
-            "mode-indicator": f"fg:{ACCENT_PINK} bold",
+            "mode-indicator": f"fg:{ACCENT} bold",
             "mode-text": "fg:#888888",
             "tool-count": "fg:#00d4aa",
             "hint": "fg:#555555",

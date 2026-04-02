@@ -23,6 +23,10 @@
 
 🧬 **OhMyCode extends itself.** Tell **OhMyCode** to "add a tool that does X" and it edits *this* repo's source to build one — no plugin SDK, no API boundaries between you and the code.
 
+<div align="center">
+  <img src="assets/main_entry.jpg" alt="OhMyCode Main Entry" width="600">
+</div>
+
 ## Highlights
 
 - 🧩 **Minimal CC Core** — Streaming output, tool execution, permission modes, context compression, memory, and resume in ~3000 lines.
