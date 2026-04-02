@@ -13,7 +13,7 @@
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
     <img src="https://img.shields.io/badge/lines-~3000-orange" alt="Lines">
     <img src="https://img.shields.io/badge/tools-9-cyan" alt="Tools">
-    <img src="https://img.shields.io/badge/tests-72-brightgreen" alt="Tests">
+    <img src="https://img.shields.io/badge/tests-190-brightgreen" alt="Tests">
   </p>
 </div>
 
@@ -31,7 +31,7 @@
 
 - 🧩 **Minimal CC Core** — Streaming output, tool execution, permission modes, context compression, memory, and resume in ~3000 lines.
 - 🔧 **Deeply Customizable** — Add your own tools/providers/prompts or just ask OhMyCode to extend itself by editing its own source.
-- 🎒 **Skills Included** — Comes with practical built-in skills for add-tool, add-provider, add-feature, debugging, and workflow conventions.
+- 🎒 **Skills Included** — Comes with practical built-in skills for add-tool, add-provider, add-feature, debugging, workflow conventions, test generation, and benchmarking.
 - 🌐 **Provider Flexibility** — Works with OpenAI, Anthropic, Azure, and OpenAI-compatible APIs.
 
 ## Install
@@ -154,16 +154,47 @@ ohmycode/
 ├── providers/           # OpenAI, Anthropic (auto-discovered)
 ├── tools/               # 9 built-in tools (auto-discovered)
 ├── skills/loader.py     # Skill scanner
-├── memory/memory.py     # MEMORY.md + LLM extraction
+├── memory/memory.py     # B+-Tree memory + LLM extraction
 ├── storage/conversation.py  # JSON persistence + resume
 └── config/config.py     # Four-layer config merge
+benchmarks/
+├── run_bench.py         # Benchmark harness (token tracking + scoring)
+└── suite.py             # 8 SWE-bench-style task definitions
 ```
 
 ## Testing
 
 ```bash
-python3 -m pytest tests/ -v   # 72 tests
+python3 -m pytest tests/ -v          # 190 unit tests
 ```
+
+### Benchmarking
+
+OhMyCode ships with a built-in benchmark suite — 8 SWE-bench-style coding tasks that test code generation, bug fixing, refactoring, test generation, tool use, and code comprehension.
+
+```bash
+python3 benchmarks/run_bench.py                        # full benchmark, current config
+python3 benchmarks/run_bench.py --model gpt-4o-mini    # compare a different model
+python3 benchmarks/run_bench.py --dry-run              # validate tasks without LLM
+```
+
+Or from the REPL: `/bench`
+
+The harness tracks **token usage (in/out)** per task and outputs a scorecard + `bench_results.json` for model comparison.
+
+### Development Closed-Loop
+
+OhMyCode includes skills for a TDD-style development loop:
+
+```
+code  →  /gen-tests  →  /run-tests  →  fix  →  repeat
+```
+
+| Skill | Purpose |
+|-------|---------|
+| `/gen-tests <module>` | Generate tests following project conventions |
+| `/run-tests [scope]` | Run tests, analyze failures, fix, re-run |
+| `/bench` | Score any provider/model with 8 agent tasks |
 
 ## License
 
