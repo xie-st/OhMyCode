@@ -56,6 +56,8 @@ class ConversationLoop:
             provider_kwargs["api_key"] = self.config.api_key
         if self.config.base_url:
             provider_kwargs["base_url"] = self.config.base_url
+        if self.config.auth_token:
+            provider_kwargs["auth_token"] = self.config.auth_token
         if self.config.azure_endpoint:
             provider_kwargs["azure_endpoint"] = self.config.azure_endpoint
             provider_kwargs["azure_api_version"] = self.config.azure_api_version

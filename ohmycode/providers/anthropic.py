@@ -24,8 +24,15 @@ from ohmycode.providers.base import ToolDef, register_provider
 class AnthropicProvider:
     name = "anthropic"
 
-    def __init__(self, api_key: str = "", **kwargs: Any):
-        self.client = AsyncAnthropic(api_key=api_key)
+    def __init__(self, api_key: str = "", base_url: str = "", auth_token: str = "", **kwargs: Any):
+        client_kwargs: dict[str, Any] = {}
+        if api_key:
+            client_kwargs["api_key"] = api_key
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        if auth_token:
+            client_kwargs["auth_token"] = auth_token
+        self.client = AsyncAnthropic(**client_kwargs)
 
     def _convert_messages(self, messages: list[Message]) -> list[dict]:
         """Convert internal message format to Anthropic API format."""
@@ -159,6 +166,8 @@ class AnthropicProvider:
                 params=params,
             )
 
+        prompt_tokens = prompt_tokens or 0
+        completion_tokens = completion_tokens or 0
         yield TurnComplete(
             finish_reason=finish_reason,
             usage=TokenUsage(

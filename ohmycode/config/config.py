@@ -25,6 +25,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "azure_api_version": "2024-02-01",
     "base_url": "",
     "api_key": "",
+    "auth_token": "",
 }
 
 
@@ -45,6 +46,7 @@ class OhMyCodeConfig(BaseModel):
     azure_api_version: str = "2024-02-01"
     base_url: str = ""
     api_key: str = ""
+    auth_token: str = ""
 
 
 def merge_configs(base: dict, override: dict) -> dict:
