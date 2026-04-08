@@ -3,7 +3,7 @@
 All notable changes to OhMyCode are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [Unreleased] - 2026-04-08
 
 ### Added
 - `/quit` as alias for `/exit` — both commands now save the conversation and extract memories before quitting
