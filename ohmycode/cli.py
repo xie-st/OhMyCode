@@ -9,6 +9,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Enable ANSI escape code processing on Windows (cmd.exe / conhost)
+if sys.platform == "win32":
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    # ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+    kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+
 from rich.console import Console
 from rich.markup import escape
 from rich.text import Text
@@ -596,7 +603,10 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
             from prompt_toolkit.patch_stdout import patch_stdout
 
             with patch_stdout():
-                console.print(*args, **kwargs)
+                # patch_stdout redirects to a non-TTY wrapper; use a fresh
+                # Console pointing at the real stdout so Rich keeps ANSI colors.
+                _con = Console(file=sys.__stdout__, force_terminal=True, highlight=False)
+                _con.print(*args, **kwargs)
         else:
             console.print(*args, **kwargs)
 
