@@ -427,11 +427,13 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
     available_skills = scan_skills()
 
     # Resume conversation
+    resumed_filename: str | None = None
     if "_resume" in config_overrides and config_overrides["_resume"] is not None:
         from ohmycode.storage.conversation import load_conversation
         result = load_conversation(config_overrides.get("_resume", ""))
         if result:
             conv.messages, metadata = result
+            resumed_filename = metadata.get("filename")
             console.print(f"[dim]Resumed conversation from {metadata.get('saved_at', 'unknown')}[/dim]\n")
         else:
             console.print("[yellow]No conversation found to resume.[/yellow]\n")
@@ -665,7 +667,7 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
                 _repl_print_plain("Goodbye.")
                 if conv.messages:
                     from ohmycode.storage.conversation import save_conversation
-                    save_conversation(conv.messages, config.provider, config.model, config.mode)
+                    save_conversation(conv.messages, config.provider, config.model, config.mode, filename=resumed_filename)
                     _repl_print_plain("Conversation saved.")
                 # Memory extraction (silent failure)
                 if conv.messages and conv._provider:

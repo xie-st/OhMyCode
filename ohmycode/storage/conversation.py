@@ -97,16 +97,19 @@ def save_conversation(
     provider: str = "",
     model: str = "",
     mode: str = "",
+    filename: str | None = None,
 ) -> str:
     """Serialize messages to JSON and save to CONVERSATIONS_DIR.
 
     Returns the filename (not full path).
     Filename format: YYYYMMDD-HHMMSS-<random8>.json
+    If filename is provided, overwrites that file instead of creating a new one.
     """
     _ensure_dir()
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    rand_suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
-    filename = f"{timestamp}-{rand_suffix}.json"
+    if not filename:
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        rand_suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
+        filename = f"{timestamp}-{rand_suffix}.json"
     filepath = CONVERSATIONS_DIR / filename
     data = {
         "metadata": {
@@ -135,7 +138,7 @@ def load_conversation(
         (messages, metadata) tuple, or None if not found.
     """
     _ensure_dir()
-    all_files = sorted(CONVERSATIONS_DIR.glob("*.json"))
+    all_files = sorted(CONVERSATIONS_DIR.glob("*.json"), key=lambda f: f.stat().st_mtime)
     if not all_files:
         return None
 
@@ -156,6 +159,7 @@ def load_conversation(
         return None
 
     metadata = data.get("metadata", {})
+    metadata["filename"] = target.name
     messages_raw = data.get("messages", [])
     messages = [_dict_to_msg(d) for d in messages_raw]
     return messages, metadata

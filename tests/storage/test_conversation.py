@@ -155,3 +155,53 @@ def test_load_corrupt_file(isolate_conversations_dir):
     corrupt.write_text("this is not json {{{")
     result = load_conversation("20250101")
     assert result is None
+
+
+def test_load_conversation_filename_in_metadata(isolate_conversations_dir):
+    messages = [UserMessage(content="hello")]
+    saved_filename = save_conversation(messages, provider="anthropic", model="claude-3", mode="default")
+
+    result = load_conversation("")
+    assert result is not None
+    _, metadata = result
+    assert metadata.get("filename") == saved_filename
+
+
+def test_resume_then_save_overwrites_original(isolate_conversations_dir):
+    initial_messages = [UserMessage(content="first message")]
+    original_filename = save_conversation(initial_messages, provider="openai", model="gpt-4o", mode="default")
+
+    result = load_conversation("")
+    assert result is not None
+    loaded_msgs, metadata = result
+    resumed_filename = metadata.get("filename")
+    assert resumed_filename == original_filename
+
+    loaded_msgs.append(UserMessage(content="second message after resume"))
+    returned_name = save_conversation(loaded_msgs, provider="openai", model="gpt-4o", mode="default", filename=resumed_filename)
+    assert returned_name == original_filename
+
+    all_files = list(isolate_conversations_dir.glob("*.json"))
+    assert len(all_files) == 1
+
+    data = json.loads((isolate_conversations_dir / original_filename).read_text(encoding="utf-8"))
+    assert data["metadata"]["message_count"] == 2
+
+
+def test_resume_picks_most_recently_modified(isolate_conversations_dir):
+    import time
+
+    msgs_a = [UserMessage(content="file A")]
+    filename_a = save_conversation(msgs_a)
+    time.sleep(0.05)
+    msgs_b = [UserMessage(content="file B")]
+    save_conversation(msgs_b)
+
+    # Overwrite file A (updates its mtime to now)
+    time.sleep(0.05)
+    save_conversation([UserMessage(content="file A updated")], filename=filename_a)
+
+    result = load_conversation("")
+    assert result is not None
+    loaded_msgs, _ = result
+    assert loaded_msgs[0].content == "file A updated"
