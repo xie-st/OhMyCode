@@ -485,6 +485,7 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
         class SlashCompleter(Completer):
             _BUILTIN = {
                 "/exit": "Quit",
+                "/quit": "Quit (alias for /exit)",
                 "/clear": "Clear conversation",
                 "/mode": "Switch mode (default|auto|plan)",
                 "/status": "Show context and session status",
@@ -663,7 +664,7 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
             parts = user_input.split(maxsplit=1)
             cmd = parts[0].lower()
 
-            if cmd == "/exit":
+            if cmd in ("/exit", "/quit"):
                 _repl_print_plain("Goodbye.")
                 if conv.messages:
                     from ohmycode.storage.conversation import save_conversation
