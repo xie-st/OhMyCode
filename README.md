@@ -71,7 +71,7 @@ ohmycode --help
 
 | Command | Description |
 |---------|------------|
-| `/exit` | Quit (auto-saves + extracts memories) |
+| `/exit & /quit` | Quit (auto-saves + extracts memories) |
 | `/clear` | Clear history |
 | `/mode <mode>` | Switch mode (`default` / `auto` / `plan`) |
 | `/memory list\|delete` | Manage memories |
