@@ -432,7 +432,7 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
         result = load_conversation(config_overrides.get("_resume", ""))
         if result:
             conv.messages, metadata = result
-            console.print(f"[dim]Resumed conversation from {metadata.get('created_at', 'unknown')}[/dim]\n")
+            console.print(f"[dim]Resumed conversation from {metadata.get('saved_at', 'unknown')}[/dim]\n")
         else:
             console.print("[yellow]No conversation found to resume.[/yellow]\n")
 
