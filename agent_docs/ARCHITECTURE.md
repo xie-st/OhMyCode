@@ -9,11 +9,11 @@ OhMyCode is a minimal AI coding-assistant CLI that reproduces Claude Code's core
 ```
 cli.py → core/loop.py → providers/base.py → providers/openai.py
                        → providers/anthropic.py
-                       → tools/base.py → tools/*.py
+                       → tools/base.py → tools/*.py → core/file_utils.py
                        → core/permissions.py
                        → core/context.py
                        → core/system_prompt.py → memory/memory.py
-         core/file_ref.py (leaf module, invoked from cli.py)
+         core/file_ref.py (leaf module, invoked from cli.py) → core/file_utils.py
          skills/loader.py (leaf module, invoked from cli.py)
          storage/conversation.py (leaf module, invoked from cli.py)
          config/config.py (standalone, read by all modules)
@@ -45,8 +45,9 @@ User input → cli.py
 
 | Module | File | Role |
 |--------|------|------|
-| CLI | `cli.py` | REPL / single-shot mode, rich rendering, prompt_toolkit completion, spinner |
+| CLI | `cli.py` | REPL / single-shot mode, rich rendering, prompt_toolkit completion (Enter selects, not submits), spinner |
 | File reference | `core/file_ref.py` | `@path` expansion and Tab completion candidates |
+| File utilities | `core/file_utils.py` | Shared `read_lines_numbered()` used by `file_ref` and `ReadTool` |
 | Conversation loop | `core/loop.py` | Async-generator-driven multi-turn chat |
 | Messages | `core/messages.py` | Message types and streaming-event dataclasses |
 | Permissions | `core/permissions.py` | Four-stage checks (rules → mode → auto-approve → confirm) |

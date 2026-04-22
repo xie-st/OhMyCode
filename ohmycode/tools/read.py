@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ohmycode.core.file_utils import read_lines_numbered
 from ohmycode.tools.base import Tool, ToolContext, ToolResult, register_tool
 
 
@@ -39,19 +40,10 @@ class ReadTool(Tool):
         limit = params.get("limit")
 
         try:
-            content = file_path.read_text(errors="replace")
+            numbered, _ = read_lines_numbered(file_path, offset=offset, limit=limit)
         except FileNotFoundError:
             return ToolResult(output=f"File not found: {file_path}", is_error=True)
         except Exception as exc:
             return ToolResult(output=f"Error reading file: {exc}", is_error=True)
 
-        lines = content.splitlines(keepends=True)
-        # offset is 1-indexed
-        start = offset - 1
-        end = (start + limit) if limit is not None else len(lines)
-        selected = lines[start:end]
-
-        numbered = "".join(
-            f"{start + i + 1}\t{line}" for i, line in enumerate(selected)
-        )
         return ToolResult(output=numbered, is_error=False)

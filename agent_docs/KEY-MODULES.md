@@ -1,8 +1,28 @@
 # Core module interfaces
 
+## core/file_utils.py
+
+Shared file reading utility used by both `core/file_ref.py` and `tools/read.py`.
+
+```python
+# Read a file and return (numbered_text, is_truncated).
+# offset: 1-indexed first line; limit: max lines (None = all).
+# max_bytes / max_lines: hard caps (None = no cap).
+# Raises OSError / FileNotFoundError / PermissionError on I/O failure.
+read_lines_numbered(
+    path: Path,
+    offset: int = 1,
+    limit: int | None = None,
+    max_bytes: int | None = None,
+    max_lines: int | None = None,
+) -> tuple[str, bool]
+```
+
+Line number format: `{line_number}\t{line_content}` (1-indexed, tab-separated).
+
 ## core/file_ref.py
 
-Handles `@path` file reference expansion and Tab completion candidates. Invoked by `cli.py` before passing user input to `ConversationLoop`.
+Handles `@path` file reference expansion and Tab completion candidates. Invoked by `cli.py` before passing user input to `ConversationLoop`. Uses `core/file_utils.read_lines_numbered()` with `max_bytes=100_000, max_lines=2_000`.
 
 ```python
 # Expand all @path tokens in a message to <file>...</file> blocks.

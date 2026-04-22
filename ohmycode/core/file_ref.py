@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from ohmycode.core.file_utils import read_lines_numbered
+
 MAX_FILE_BYTES = 100_000  # 100 KB per file
 MAX_FILE_LINES = 2_000
 
@@ -57,7 +59,9 @@ def get_at_completions(prefix: str, cwd: str) -> list[tuple[str, str]]:
 def _read_file_content(file_path: Path) -> tuple[str, bool]:
     """Read and format one file for injection. Returns (block, is_error)."""
     try:
-        raw = file_path.read_bytes()
+        numbered, truncated = read_lines_numbered(
+            file_path, max_bytes=MAX_FILE_BYTES, max_lines=MAX_FILE_LINES
+        )
     except FileNotFoundError:
         return f"[Error: file not found: {file_path}]", True
     except PermissionError:
@@ -65,19 +69,6 @@ def _read_file_content(file_path: Path) -> tuple[str, bool]:
     except OSError as exc:
         return f"[Error reading {file_path}: {exc}]", True
 
-    truncated = False
-    if len(raw) > MAX_FILE_BYTES:
-        raw = raw[:MAX_FILE_BYTES]
-        truncated = True
-
-    text = raw.decode("utf-8", errors="replace")
-    lines = text.splitlines(keepends=True)
-
-    if len(lines) > MAX_FILE_LINES:
-        lines = lines[:MAX_FILE_LINES]
-        truncated = True
-
-    numbered = "".join(f"{i + 1}\t{line}" for i, line in enumerate(lines))
     if truncated:
         numbered += f"\n[... truncated at {MAX_FILE_LINES} lines / {MAX_FILE_BYTES // 1024}KB ...]"
 

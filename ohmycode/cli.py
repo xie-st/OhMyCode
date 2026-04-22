@@ -481,6 +481,7 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
         from prompt_toolkit.completion import Completer, Completion
         from prompt_toolkit.formatted_text import HTML
         from prompt_toolkit.styles import Style as PTStyle
+        from prompt_toolkit.key_binding import KeyBindings
 
         def _truncate(text: str, max_len: int = 50) -> str:
             return text[:max_len - 1] + "…" if len(text) > max_len else text
@@ -603,6 +604,18 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
 
         _completer = SlashCompleter(available_skills)
 
+        _kb = KeyBindings()
+
+        @_kb.add("enter")
+        def _handle_enter(event):
+            buf = event.current_buffer
+            cs = buf.complete_state
+            if cs and cs.completions:
+                # Menu open: apply navigated item, or fall back to first candidate.
+                buf.apply_completion(cs.current_completion or cs.completions[0])
+            else:
+                buf.validate_and_handle()
+
         pt_session = PromptSession(
             history=FileHistory(history_path),
             completer=_completer,
@@ -612,6 +625,7 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
                     pt_session.app.current_buffer.text
                 )
             ),
+            key_bindings=_kb,
             bottom_toolbar=_get_toolbar,
             prompt_continuation="   ",
         )

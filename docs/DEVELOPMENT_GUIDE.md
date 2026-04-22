@@ -13,7 +13,8 @@ ohmycode/
 │   ├── loop.py          # Main conversation loop (async generator)
 │   ├── context.py       # Context management + four-level compression
 │   ├── permissions.py   # Permissions pipeline (rules + mode checks)
-│   └── system_prompt.py # System prompt assembly
+│   ├── system_prompt.py # System prompt assembly
+│   └── file_utils.py    # Shared read_lines_numbered() for file_ref + ReadTool
 ├── providers/
 │   ├── base.py          # Provider protocol + registry
 │   ├── openai.py        # OpenAI-compatible provider
@@ -42,8 +43,10 @@ ohmycode/
 ```
 cli.py → core/loop.py → providers/base.py
                        → tools/base.py → core/permissions.py
+                       → tools/*.py → core/file_utils.py
                        → core/context.py
                        → core/system_prompt.py → memory/memory.py
+         core/file_ref.py → core/file_utils.py
 config/config.py (standalone, read everywhere)
 storage/conversation.py (standalone, used from cli.py)
 ```
