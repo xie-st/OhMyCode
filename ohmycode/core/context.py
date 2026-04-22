@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, List
 
 import tiktoken
 
-from ohmycode.core.messages import AssistantMessage, Message, UserMessage
+from ohmycode.core.messages import AssistantMessage, ImageBlock, Message, UserMessage
 
 if TYPE_CHECKING:
     pass
@@ -49,8 +49,16 @@ class ContextManager:
         if system_prompt:
             total += _count_text_tokens(system_prompt) + _MSG_OVERHEAD
         for msg in messages:
-            content = getattr(msg, "content", "") or ""
-            total += _count_text_tokens(content) + _MSG_OVERHEAD
+            raw = getattr(msg, "content", "") or ""
+            if isinstance(raw, list):
+                # Multimodal content: sum text parts; approximate each image as 85 tokens
+                text_parts = " ".join(
+                    item for item in raw if isinstance(item, str) and item
+                )
+                image_count = sum(1 for item in raw if isinstance(item, ImageBlock))
+                total += _count_text_tokens(text_parts) + image_count * 85 + _MSG_OVERHEAD
+            else:
+                total += _count_text_tokens(raw) + _MSG_OVERHEAD
         return total
 
     def get_usage_ratio(self, messages: List[Message], system_prompt: str = "") -> float:
