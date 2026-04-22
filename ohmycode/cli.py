@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,7 @@ from rich.text import Text
 from ohmycode.config.config import load_config, OhMyCodeConfig
 from ohmycode.core.loop import ConversationLoop
 from ohmycode.core.messages import TextChunk, ToolCallStart, ToolCallResult, TurnComplete
+from ohmycode.core.file_ref import expand_file_refs, get_at_completions
 from ohmycode.skills.loader import scan_skills, load_skill, SkillInfo
 
 console = Console()
@@ -405,7 +407,8 @@ async def run_single(prompt: str, config_overrides: dict[str, Any]) -> int:
     config = load_config(config_overrides)
     conv = ConversationLoop(config=config, confirm_fn=confirm_tool_call)
     conv.initialize()
-    conv.add_user_message(prompt)
+    expanded_prompt, _ = expand_file_refs(prompt, os.getcwd())
+    conv.add_user_message(expanded_prompt)
 
     try:
         finish_reason = await render_stream(conv)
@@ -499,6 +502,20 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
 
             def get_completions(self, document, complete_event):
                 text = document.text_before_cursor
+
+                # @ file reference completion
+                at_pos = text.rfind("@")
+                if at_pos != -1 and " " not in text[at_pos:]:
+                    after_at = text[at_pos + 1:]
+                    for full_path, meta in get_at_completions(after_at, os.getcwd()):
+                        yield Completion(
+                            full_path,
+                            start_position=-len(after_at),
+                            display=HTML(f"<b>@{full_path}</b>"),
+                            display_meta=meta,
+                        )
+                    return
+
                 if not text.startswith("/"):
                     return
                 offset = len(text)
@@ -574,6 +591,12 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
 
         from prompt_toolkit.filters import Condition
 
+        def _should_complete_while_typing(buf_text: str) -> bool:
+            if buf_text.startswith("/") and " " not in buf_text:
+                return True
+            at_pos = buf_text.rfind("@")
+            return at_pos != -1 and " " not in buf_text[at_pos:]
+
         history_dir = Path.home() / ".ohmycode"
         history_dir.mkdir(parents=True, exist_ok=True)
         history_path = str(history_dir / "history")
@@ -585,9 +608,8 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
             completer=_completer,
             style=pt_style,
             complete_while_typing=Condition(
-                lambda: (
-                    pt_session.app.current_buffer.text.startswith("/")
-                    and " " not in pt_session.app.current_buffer.text
+                lambda: _should_complete_while_typing(
+                    pt_session.app.current_buffer.text
                 )
             ),
             bottom_toolbar=_get_toolbar,
@@ -798,7 +820,10 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
                 continue
 
         # ── Normal user message ──────────────────────────────────────────
-        conv.add_user_message(user_input)
+        expanded_input, ref_warnings = expand_file_refs(user_input, os.getcwd())
+        for w in ref_warnings:
+            _repl_print(f"  [yellow]{w}[/yellow]")
+        conv.add_user_message(expanded_input)
 
         gen_task: asyncio.Task | None = None
         try:
