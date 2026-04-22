@@ -27,6 +27,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf-16"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf-16"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # Ensure project root is on sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
