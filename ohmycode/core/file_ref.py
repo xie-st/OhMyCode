@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ohmycode.core.file_utils import read_lines_numbered
+from ohmycode.core.file_utils import is_image, read_image_b64, read_lines_numbered
+from ohmycode.core.messages import ImageBlock
 
 MAX_FILE_BYTES = 100_000  # 100 KB per file
 MAX_FILE_LINES = 2_000
@@ -75,25 +76,47 @@ def _read_file_content(file_path: Path) -> tuple[str, bool]:
     return numbered, False
 
 
-def expand_file_refs(text: str, cwd: str) -> tuple[str, list[str]]:
-    """Replace all @path tokens in text with file contents.
+def expand_file_refs(
+    text: str, cwd: str
+) -> tuple[str, list[ImageBlock], list[str]]:
+    """Replace all @path tokens in text with file contents or image placeholders.
 
-    Returns (expanded_text, warnings). On error, leaves @path unchanged
-    and appends a warning. Never raises.
+    Returns (expanded_text, image_blocks, warnings).
+    - Text files are inlined as <file> XML blocks.
+    - Image files are replaced with "[image: <path>]" placeholders and their
+      data is returned separately as ImageBlock objects.
+    - On error, leaves @path unchanged and appends a warning. Never raises.
     """
     warnings: list[str] = []
+    image_blocks: list[ImageBlock] = []
     base = Path(cwd)
 
     def _replace(match: re.Match) -> str:  # type: ignore[type-arg]
         raw_path = match.group(1)
         candidate = (base / raw_path).resolve()
+
+        if is_image(candidate):
+            try:
+                b64_data, media_type = read_image_b64(candidate)
+            except FileNotFoundError:
+                warnings.append(f"[Error: file not found: {candidate}]")
+                return match.group(0)
+            except ValueError as exc:
+                warnings.append(f"[Error: {exc}]")
+                return match.group(0)
+            except OSError as exc:
+                warnings.append(f"[Error reading {candidate}: {exc}]")
+                return match.group(0)
+            image_blocks.append(ImageBlock(media_type=media_type, data=b64_data))
+            return f"[image: {raw_path}]"
+
         block, is_error = _read_file_content(candidate)
         if is_error:
             warnings.append(block)
-            return match.group(0)  # keep original @path on error
+            return match.group(0)
         header = f'\n<file path="{raw_path}">\n'
         footer = "\n</file>\n"
         return header + block + footer
 
     expanded = _AT_REF_RE.sub(_replace, text)
-    return expanded, warnings
+    return expanded, image_blocks, warnings

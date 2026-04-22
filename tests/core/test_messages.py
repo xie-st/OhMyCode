@@ -2,6 +2,7 @@
 
 from ohmycode.core.messages import (
     AssistantMessage,
+    ImageBlock,
     Message,
     SystemMessage,
     TextChunk,
@@ -61,6 +62,24 @@ def test_message_to_api_format_user():
     msg = UserMessage(content="hello")
     api = msg.to_api_dict()
     assert api == {"role": "user", "content": "hello"}
+
+
+def test_user_message_multimodal_to_api_dict():
+    img = ImageBlock(media_type="image/png", data="abc123")
+    msg = UserMessage(content=["describe this", img])
+    api = msg.to_api_dict()
+    assert api["role"] == "user"
+    assert isinstance(api["content"], list)
+    text_parts = [p for p in api["content"] if p["type"] == "text"]
+    img_parts = [p for p in api["content"] if p["type"] == "image_url"]
+    assert text_parts[0]["text"] == "describe this"
+    assert img_parts[0]["image_url"]["url"] == "data:image/png;base64,abc123"
+
+
+def test_user_message_text_only_stays_string():
+    msg = UserMessage(content="plain text")
+    api = msg.to_api_dict()
+    assert api["content"] == "plain text"
 
 
 def test_message_to_api_format_assistant_with_tool_use():

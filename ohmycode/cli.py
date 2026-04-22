@@ -834,10 +834,10 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
                 continue
 
         # ── Normal user message ──────────────────────────────────────────
-        expanded_input, ref_warnings = expand_file_refs(user_input, os.getcwd())
+        expanded_input, image_blocks, ref_warnings = expand_file_refs(user_input, os.getcwd())
         for w in ref_warnings:
             _repl_print(f"  [yellow]{w}[/yellow]")
-        conv.add_user_message(expanded_input)
+        conv.add_user_message(expanded_input, image_blocks=image_blocks or None)
 
         gen_task: asyncio.Task | None = None
         try:

@@ -17,6 +17,7 @@ from ohmycode.core.messages import (
     UserMessage,
     AssistantMessage,
     ToolResultMessage,
+    ImageBlock,
 )
 from ohmycode.providers.base import ToolDef, register_provider
 
@@ -42,7 +43,25 @@ class AnthropicProvider:
             msg = messages[i]
 
             if isinstance(msg, UserMessage):
-                result.append({"role": "user", "content": msg.content})
+                if isinstance(msg.content, str):
+                    result.append({"role": "user", "content": msg.content})
+                else:
+                    # Multimodal: convert to Anthropic content block list
+                    content_blocks: list[dict] = []
+                    for item in msg.content:
+                        if isinstance(item, str):
+                            if item:
+                                content_blocks.append({"type": "text", "text": item})
+                        elif isinstance(item, ImageBlock):
+                            content_blocks.append({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": item.media_type,
+                                    "data": item.data,
+                                },
+                            })
+                    result.append({"role": "user", "content": content_blocks})
 
             elif isinstance(msg, AssistantMessage):
                 content: list[dict] = []

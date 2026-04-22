@@ -17,6 +17,7 @@ from ohmycode.core.messages import (
     TokenUsage,
     StreamEvent,
     Message,
+    ImageBlock,
 )
 from ohmycode.core.context import ContextManager
 from ohmycode.core.permissions import check_permission
@@ -90,9 +91,14 @@ class ConversationLoop:
             system_prompt_append=self.config.system_prompt_append,
         )
 
-    def add_user_message(self, content: str) -> None:
+    def add_user_message(
+        self, content: str, image_blocks: list[ImageBlock] | None = None
+    ) -> None:
         """Append a user message to conversation history."""
-        self.messages.append(UserMessage(content=content))
+        if image_blocks:
+            self.messages.append(UserMessage(content=[content] + image_blocks))
+        else:
+            self.messages.append(UserMessage(content=content))
 
     def cancel(self) -> None:
         """Set cancel flag so run_turn() exits on the next check."""

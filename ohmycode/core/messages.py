@@ -20,12 +20,38 @@ class ToolUseBlock:
 
 
 @dataclass
+class ImageBlock:
+    """A base64-encoded image to embed in a user message."""
+
+    media_type: str  # e.g. "image/png"
+    data: str        # base64-encoded bytes
+
+
+# Content item in a multimodal user message
+UserContent = Union[str, ImageBlock]
+
+
+@dataclass
 class UserMessage:
-    content: str
+    # Plain string for text-only; list when images are present.
+    content: Union[str, list[UserContent]]
     role: str = field(default="user", init=False)
 
     def to_api_dict(self) -> dict:
-        return {"role": self.role, "content": self.content}
+        if isinstance(self.content, str):
+            return {"role": self.role, "content": self.content}
+        # Multimodal: build OpenAI-style content list
+        parts: list[dict] = []
+        for item in self.content:
+            if isinstance(item, str):
+                if item:
+                    parts.append({"type": "text", "text": item})
+            else:
+                parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{item.media_type};base64,{item.data}"},
+                })
+        return {"role": self.role, "content": parts}
 
 
 @dataclass
