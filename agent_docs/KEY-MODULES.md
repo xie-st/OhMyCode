@@ -22,7 +22,7 @@ Line number format: `{line_number}\t{line_content}` (1-indexed, tab-separated).
 
 ## core/file_ref.py
 
-Handles `@path` file reference expansion and Tab completion candidates. Invoked by `cli.py` before passing user input to `ConversationLoop`. Uses `core/file_utils.read_lines_numbered()` with `max_bytes=100_000, max_lines=2_000`.
+Handles `@path` file reference expansion and Tab completion candidates. Invoked by `cli.py` (normal messages) and `_cli/prompt_session.py` (Tab completion) before passing user input to `ConversationLoop`. Uses `core/file_utils.read_lines_numbered()` with `max_bytes=100_000, max_lines=2_000`.
 
 ```python
 # Expand all @path tokens in a message to <file>...</file> blocks.
@@ -106,7 +106,7 @@ get_provider("name", api_key=...) -> Provider
 1. Inside the `provider.stream()` loop: saves partial `AssistantMessage(content=collected_text, tool_calls=[])` to history, yields `TurnComplete(finish_reason="cancelled")`, then re-raises.
 2. Inside the permission-check / tool-execution block: fills in `ToolResultMessage("Cancelled by user.")` for every `tool_call_id` that has no response (required by the Anthropic API), yields `TurnComplete(finish_reason="cancelled")`, then re-raises.
 
-**Ctrl+C wiring in `cli.py`** — `run()` registers `signal.signal(SIGINT, ...)` before `asyncio.run()` to intercept the signal into a `threading.Event`. `_stream_with_cancel()` inside `run_repl()` wraps `render_stream()` in an `asyncio.Task` and uses `asyncio.wait()` to race it against the event; on cancel it calls `task.cancel()` so the `CancelledError` stays inside the Task boundary and never escapes to `asyncio.run()`.
+**Ctrl+C wiring in `cli.py`** — `run()` registers `signal.signal(SIGINT, ...)` before `asyncio.run()` to intercept the signal into a `threading.Event`. `_stream_with_cancel()` inside `run_repl()` wraps `render_stream()` (from `_cli/output.py`) in an `asyncio.Task` and uses `asyncio.wait()` to race it against the event; on cancel it calls `task.cancel()` so the `CancelledError` stays inside the Task boundary and never escapes to `asyncio.run()`.
 
 ## core/messages.py
 

@@ -7,12 +7,10 @@ import asyncio
 import json
 import os
 import re
-import shutil
 import signal
 import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -34,69 +32,15 @@ from rich.text import Text
 
 from ohmycode.config.config import load_config, OhMyCodeConfig
 from ohmycode.core.loop import ConversationLoop
-from ohmycode.core.messages import TextChunk, ThinkingChunk, ToolCallStart, ToolCallResult, TurnComplete
-from ohmycode.core.file_ref import expand_file_refs, get_at_completions
-from ohmycode.memory.memory import (
-    BTreeMemoryStore,
-    get_project_memory_dir,
-    VALID_CATEGORIES,
-    extract_memories_from_conversation,
-)
-from ohmycode.skills.loader import scan_skills, load_skill, SkillInfo
-from ohmycode.storage.conversation import load_conversation, save_conversation
+from ohmycode.core.file_ref import expand_file_refs
+from ohmycode.skills.loader import scan_skills
+from ohmycode.storage.conversation import load_conversation
+
+from ohmycode._cli.output import render_stream, ACCENT
+from ohmycode._cli.prompt_session import build_prompt_session, REPL_PROMPT_LINE_PREFIX
+from ohmycode._cli.repl_commands import handle_slash_command
 
 console = Console()
-
-# CLI accent: warm orange; matches toolbar mode indicator
-ACCENT = "#ff6b9d"
-
-# Claw-style block letters (cf. claw-cli startup_banner): merged rows, no multi-line pixel sprite.
-# Second letter is explicit H (middle bar on row 3: ███████║), not U-shaped.
-_OHMY_BLOCK_LINES = (
-    " ██████╗██╗  ██╗███╗   ███╗██╗   ██╗\n"
-    "██╔═══██╗██║  ██║████╗ ████║╚██╗ ██╔╝\n"
-    "██║   ██║███████║██╔████╔██║ ╚████╔╝ \n"
-    "██║   ██║██╔══██║██║╚██╔╝██║  ╚██╔╝  \n"
-    "╚██████╔╝██║  ██║██║ ╚═╝ ██║   ██║   \n"
-    " ╚═════╝╚═╝  ╚═╝╚═╝     ╚═╝   ╚═╝   "
-)
-
-# REPL input line prefix (after separator); must match _get_prompt() in run_repl
-REPL_PROMPT_LINE_PREFIX = "❯  "
-
-
-def _repl_prompt_prefix_display_width() -> int:
-    """Terminal display width of REPL_PROMPT_LINE_PREFIX (East Asian / emoji-safe)."""
-    try:
-        from wcwidth import wcswidth
-
-        w = wcswidth(REPL_PROMPT_LINE_PREFIX)
-        if w >= 0:
-            return w
-    except ImportError:
-        pass
-    return len(REPL_PROMPT_LINE_PREFIX)
-
-
-def _patch_pt_completion_menu_align_left(pt_session: Any) -> None:
-    """Keep slash-command completion menu aligned with input (not following the cursor)."""
-    try:
-        from prompt_toolkit.layout import walk
-        from prompt_toolkit.layout.containers import FloatContainer
-        from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
-    except ImportError:
-        return
-    # CompletionsMenu draws each item with a leading space (see
-    # prompt_toolkit.layout.menus._get_menu_item_fragments); offset the float
-    # by one cell so the visible text lines up with the buffer, not the cursor.
-    left = max(0, _repl_prompt_prefix_display_width() - 1)
-    for container in walk(pt_session.layout.container):
-        if not isinstance(container, FloatContainer):
-            continue
-        for fl in container.floats:
-            if isinstance(fl.content, (CompletionsMenu, MultiColumnCompletionsMenu)):
-                fl.left = left
-                fl.xcursor = False
 
 
 def _build_repl_welcome_text(
@@ -105,6 +49,14 @@ def _build_repl_welcome_text(
     n_skills: int,
 ) -> Text:
     """Claw-inspired: big block letters + subtitle + aligned meta rows."""
+    _OHMY_BLOCK_LINES = (
+        " ██████╗██╗  ██╗███╗   ███╗██╗   ██╗\n"
+        "██╔═══██╗██║  ██║████╗ ████║╚██╗ ██╔╝\n"
+        "██║   ██║███████║██╔████╔██║ ╚████╔╝ \n"
+        "██║   ██║██╔══██║██║╚██╔╝██║  ╚██╔╝  \n"
+        "╚██████╔╝██║  ██║██║ ╚═╝ ██║   ██║   \n"
+        " ╚═════╝╚═╝  ╚═╝╚═╝     ╚═╝   ╚═╝   "
+    )
     t = Text()
     t.append(_OHMY_BLOCK_LINES, style=ACCENT)
     t.append("  ")
@@ -187,10 +139,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def run_vchange(step: int | None = None) -> int:
-    """Version switch: step=None shows status, step=-1 goes back, step=1 goes forward. Returns exit code."""
+    """Version switch: step=None shows status, step=-1 goes back, step=1 goes forward."""
     cwd = os.getcwd()
 
-    # Check git
     r = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
                        capture_output=True, text=True, cwd=cwd)
     if r.returncode != 0:
@@ -198,7 +149,6 @@ def run_vchange(step: int | None = None) -> int:
         return 1
 
     if step is None:
-        # Show current position
         log = subprocess.run(["git", "log", "--oneline", "-5"],
                              capture_output=True, text=True, cwd=cwd)
         head = subprocess.run(["git", "rev-parse", "HEAD"],
@@ -217,7 +167,6 @@ def run_vchange(step: int | None = None) -> int:
         console.print("[dim]Nothing to do.[/dim]")
         return 0
 
-    # Full commit history on main (oldest to newest)
     all_log = subprocess.run(["git", "log", "main", "--oneline", "--reverse"],
                              capture_output=True, text=True, cwd=cwd)
     all_commits = all_log.stdout.strip().splitlines()
@@ -252,7 +201,6 @@ def run_vchange(step: int | None = None) -> int:
     console.print(f"\n  [bold]Current:[/] {all_commits[current_idx]}")
     console.print(f"  [bold]Target: [/] {target_line}")
 
-    # Warn about uncommitted changes
     status = subprocess.run(["git", "status", "--porcelain"],
                             capture_output=True, text=True, cwd=cwd)
     if status.stdout.strip():
@@ -295,223 +243,6 @@ async def confirm_tool_call(tool_name: str, params: dict) -> str:
         return "n"
 
 
-# ── Stream rendering ──────────────────────────────────────────────────────────
-
-_BOX_CONTENT_WIDTH = 60   # characters per line of thinking content
-_BOX_LINES = 3            # visible content rows
-_BOX_THROTTLE = 0.05      # minimum seconds between redraws
-
-
-class ThinkingBox:
-    """Fixed-height scrolling box for streaming thinking content.
-
-    All output goes through sys.stdout directly (no Rich) so that Rich's
-    internal state stays clean for the text response that follows.
-    """
-
-    def __init__(self) -> None:
-        self._lines: list[str] = []   # completed lines (max _BOX_LINES)
-        self._current: str = ""       # line being built
-        self.visible: bool = False
-        self._last_draw: float = 0.0
-        self._drawn_height: int = 0   # how many lines were printed last draw
-
-    def push(self, text: str) -> None:
-        self._current += text
-        # Split on newlines in the incoming chunk
-        while "\n" in self._current:
-            head, self._current = self._current.split("\n", 1)
-            self._flush_line(head)
-        # Soft-wrap long lines
-        while len(self._current) >= _BOX_CONTENT_WIDTH:
-            self._flush_line(self._current[:_BOX_CONTENT_WIDTH])
-            self._current = self._current[_BOX_CONTENT_WIDTH:]
-        # Throttle redraws
-        now = time.monotonic()
-        if now - self._last_draw >= _BOX_THROTTLE:
-            self._draw()
-            self._last_draw = now
-
-    def _flush_line(self, line: str) -> None:
-        if len(self._lines) >= _BOX_LINES:
-            self._lines = []   # reset: scroll-by-clear
-        self._lines.append(line)
-
-    def _build_frame(self) -> str:
-        display = list(self._lines)
-        if self._current:
-            display = display + [self._current]
-        display = display[-_BOX_LINES:]
-        header = f"  \033[38;2;255;107;157m▌\033[0m \033[2mThinking\033[0m"
-        rows = [header]
-        for i in range(_BOX_LINES):
-            if i < len(display):
-                content = display[i][:_BOX_CONTENT_WIDTH]
-                rows.append(f"  \033[2m│  {content}\033[0m")
-            else:
-                rows.append(f"  \033[2m│\033[0m")
-        return "\n".join(rows)
-
-    def _draw(self) -> None:
-        frame = self._build_frame()
-        line_count = frame.count("\n") + 1
-        if self.visible and self._drawn_height > 0:
-            # Move up and erase everything below so no old characters linger
-            sys.stdout.write(f"\033[{self._drawn_height}A\033[J")
-        sys.stdout.write(frame)
-        sys.stdout.write("\n")
-        sys.stdout.flush()
-        self.visible = True
-        self._drawn_height = line_count
-
-    def clear(self) -> None:
-        """Erase the box so normal output can follow."""
-        if not self.visible:
-            return
-        # Move up to box top and clear everything below
-        sys.stdout.write(f"\033[{self._drawn_height}A\033[J")
-        sys.stdout.flush()
-        self.visible = False
-        self._drawn_height = 0
-
-async def render_stream(conv: ConversationLoop) -> str:
-    """Consume run_turn() event stream, render to terminal, return finish_reason."""
-    finish_reason = "stop"
-    text_printed = False
-    tool_count = 0
-
-    # ── "Thinking" spinner (write to sys.stdout directly, not rich.Live) ──
-    SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    thinking = True
-    t_start = time.monotonic()
-    spinner_task = None
-
-    async def _spinner():
-        idx = 0
-        try:
-            while True:
-                elapsed = time.monotonic() - t_start
-                frame = SPINNER_FRAMES[idx % len(SPINNER_FRAMES)]
-                # \r to start of line, \033[K clear to end of line
-                sys.stdout.write(f"\r  \033[2m{frame} Waiting... {elapsed:.0f}s\033[0m\033[K")
-                sys.stdout.flush()
-                idx += 1
-                await asyncio.sleep(0.1)
-        except asyncio.CancelledError:
-            # Clear spinner line
-            sys.stdout.write("\r\033[K")
-            sys.stdout.flush()
-
-    spinner_task = asyncio.create_task(_spinner())
-    box = ThinkingBox()
-
-    try:
-        async for event in conv.run_turn():
-            # Stop spinner when first real event arrives
-            if thinking:
-                thinking = False
-                if spinner_task and not spinner_task.done():
-                    spinner_task.cancel()
-                    try:
-                        await spinner_task
-                    except asyncio.CancelledError:
-                        pass
-                if conv.think:
-                    sys.stdout.write("\n")
-                    sys.stdout.flush()
-
-            if isinstance(event, ThinkingChunk):
-                if conv.think:
-                    box.push(event.text)
-                continue
-
-            if isinstance(event, TextChunk):
-                if box.visible:
-                    box.clear()
-                # Stream print with indent
-                text = event.text
-                if not text_printed:
-                    # After tool calls: newline + bullet marker
-                    if tool_count > 0:
-                        console.print(f"\n  [bold {ACCENT}]●[/] ", end="", highlight=False)
-                    else:
-                        console.print("  ", end="", highlight=False)
-                # Add 4-space indent after each newline
-                text = text.replace("\n", "\n    ")
-                console.print(text, end="", highlight=False)
-                text_printed = True
-
-            elif isinstance(event, ToolCallStart):
-                if box.visible:
-                    box.clear()
-                if text_printed:
-                    console.print()  # Newline to separate from text
-                    text_printed = False
-
-                # Show tool call in a compact format
-                tool_display = event.tool_name
-                params_str = json.dumps(event.params, ensure_ascii=False)
-                if len(params_str) > 100:
-                    params_str = params_str[:97] + "..."
-                console.print(
-                    f"\n    [bold {ACCENT}]▸[/] [bold]{escape(tool_display)}[/]  [dim]{escape(params_str)}[/]",
-                    highlight=False,
-                )
-                tool_count += 1
-
-            elif isinstance(event, ToolCallResult):
-                raw = event.result
-                max_lines = 10
-                lines = raw.splitlines()
-                # Indent each line by 4 spaces; escape so tool output cannot break Rich markup
-                if len(lines) > max_lines:
-                    indented = "\n".join("    " + l for l in lines[:max_lines])
-                    output = escape(indented) + f"\n    [dim]... ({len(lines)} lines total)[/dim]"
-                else:
-                    body = raw
-                    if len(body) > 500:
-                        body = body[:497] + "..."
-                    body = "\n".join("    " + l for l in body.splitlines())
-                    output = escape(body)
-
-                if event.is_error:
-                    console.print(f"    [red]✗[/] [red]{output}[/]", highlight=False)
-                else:
-                    console.print(f"    [green]✓[/]\n[dim]{output}[/]", highlight=False)
-
-            elif isinstance(event, TurnComplete):
-                finish_reason = event.finish_reason
-                if box.visible:
-                    box.clear()
-                if text_printed:
-                    console.print()  # Final newline
-                    text_printed = False
-                u = event.usage
-                elapsed = time.monotonic() - t_start
-                # Stats line: tool count · tokens · elapsed
-                stats_parts = []
-                if tool_count > 0:
-                    stats_parts.append(f"{tool_count} tool use{'s' if tool_count > 1 else ''}")
-                if u.total_tokens > 0:
-                    stats_parts.append(f"{u.total_tokens:,} tokens")
-                stats_parts.append(f"{elapsed:.1f}s")
-                console.print(f"\n  [dim]{' · '.join(stats_parts)}[/dim]")
-                tool_count = 0
-
-    finally:
-        # Always restore terminal state regardless of how the coroutine exits.
-        if box.visible:
-            box.clear()
-        if spinner_task and not spinner_task.done():
-            spinner_task.cancel()
-            try:
-                await spinner_task
-            except asyncio.CancelledError:
-                pass
-
-    return finish_reason
-
-
 # ── One-shot prompt mode ─────────────────────────────────────────────────────
 
 
@@ -524,7 +255,7 @@ async def run_single(prompt: str, config_overrides: dict[str, Any]) -> int:
     conv.add_user_message(expanded_prompt)
 
     try:
-        finish_reason = await render_stream(conv)
+        await render_stream(conv)
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted.[/yellow]")
         return 130
@@ -542,8 +273,30 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
     conv.initialize()
     available_skills = scan_skills()
 
-    # Resume conversation
+    # Mutable state shared with callbacks
+    current_mode = config.mode
     resumed_filename: str | None = None
+
+    def get_current_mode() -> str:
+        return current_mode
+
+    def set_current_mode(m: str) -> None:
+        nonlocal current_mode
+        current_mode = m
+
+    def set_conv(new_conv: ConversationLoop) -> None:
+        nonlocal conv
+        conv = new_conv
+
+    def set_config(new_config: OhMyCodeConfig) -> None:
+        nonlocal config
+        config = new_config
+
+    def set_resumed_filename(f: str | None) -> None:
+        nonlocal resumed_filename
+        resumed_filename = f
+
+    # Resume conversation
     if "_resume" in config_overrides and config_overrides["_resume"] is not None:
         result = load_conversation(config_overrides.get("_resume", ""))
         if result:
@@ -553,15 +306,13 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
         else:
             console.print("[yellow]No conversation found to resume.[/yellow]\n")
 
-    # Welcome banner (Claw-inspired: block letters + meta rows; no pixel sprite)
+    # Welcome banner
     model_display = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", config.model)
-
     welcome_body = _build_repl_welcome_text(
         model_display=model_display,
         mode=config.mode,
         n_skills=len(available_skills),
     )
-
     banner = Panel(
         welcome_body,
         title=f"[bold {ACCENT}]◆ OhMyCode[/]",
@@ -580,199 +331,37 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
     )
     console.print()
 
-    # Try prompt_toolkit; fall back to input()
+    # Build prompt_toolkit session (or fall back to plain input)
     use_prompt_toolkit = False
     pt_session = None
+    _get_prompt = None
     try:
-        from prompt_toolkit import PromptSession
-        from prompt_toolkit.history import FileHistory
-        from prompt_toolkit.completion import Completer, Completion
-        from prompt_toolkit.formatted_text import HTML
-        from prompt_toolkit.styles import Style as PTStyle
-        from prompt_toolkit.key_binding import KeyBindings
-
-        def _truncate(text: str, max_len: int = 50) -> str:
-            return text[:max_len - 1] + "…" if len(text) > max_len else text
-
-        class SlashCompleter(Completer):
-            _BUILTIN = {
-                "/exit": "Quit",
-                "/quit": "Quit (alias for /exit)",
-                "/clear": "Clear conversation",
-                "/new": "Save current conversation and start fresh",
-                "/mode": "Switch mode (default|auto|plan)",
-                "/status": "Show context and session status",
-                "/memory": "Manage memories",
-                "/vchange": "Version switch (-1 back / 1 forward)",
-                "/skills": "List all skills",
-                "/think": "Set reasoning effort: low | medium | high | off",
-            }
-
-            def __init__(self, skills: dict[str, SkillInfo]) -> None:
-                self._skills = skills
-
-            def get_completions(self, document, complete_event):
-                text = document.text_before_cursor
-
-                # @ file reference completion
-                at_pos = text.rfind("@")
-                if at_pos != -1 and " " not in text[at_pos:]:
-                    after_at = text[at_pos + 1:]
-                    for full_path, meta in get_at_completions(after_at, os.getcwd()):
-                        yield Completion(
-                            full_path,
-                            start_position=-len(after_at),
-                            display=HTML(f"<b>@{full_path}</b>"),
-                            display_meta=meta,
-                        )
-                    return
-
-                if not text.startswith("/"):
-                    return
-                offset = len(text)
-                for cmd, desc in self._BUILTIN.items():
-                    if cmd.startswith(text):
-                        yield Completion(
-                            cmd, start_position=-offset,
-                            display=HTML(f"<b>{cmd}</b>"),
-                            display_meta=desc,
-                        )
-                for skill_name, info in sorted(self._skills.items()):
-                    full = f"/{skill_name}"
-                    if full.startswith(text):
-                        yield Completion(
-                            full, start_position=-offset,
-                            display=HTML(f"<ansicyan>{full}</ansicyan>"),
-                            display_meta=_truncate(info.description),
-                        )
-
-        # prompt_toolkit styles
-        pt_style = PTStyle.from_dict({
-            # Completion menu
-            "completion-menu": "noinherit",
-            "completion-menu.completion": "noinherit fg:#bbbbbb",
-            "completion-menu.completion.current": f"noinherit noreverse fg:{ACCENT} bold",
-            "completion-menu.meta.completion": "noinherit fg:#666666",
-            "completion-menu.meta.completion.current": f"noinherit noreverse fg:{ACCENT}",
-            "scrollbar.background": "noinherit",
-            "scrollbar.button": "noinherit",
-            # Input area
-            "prompt": "fg:#888888",
-            "separator": "fg:#444444",
-            "bottom-toolbar": "bg:default fg:default noreverse",
-            "bottom-toolbar.text": "noreverse",
-            "mode-indicator": f"fg:{ACCENT} bold",
-            "mode-text": "fg:#888888",
-            "tool-count": "fg:#00d4aa",
-            "hint": "fg:#555555",
-        })
-
-        # Terminal width
-        _term_width = shutil.get_terminal_size().columns
-
-        def _get_toolbar():
-            """Bottom toolbar: mode · context · skill count · hint"""
-            from prompt_toolkit.formatted_text import FormattedText
-            mode_label = current_mode
-            tool_total = len(available_skills)
-            status = conv.get_status_snapshot()
-            context_label = f"{status['usage_percent']:.1f}% ctx"
-            parts = [
-                ("class:mode-indicator", "  ▸▸ "),
-                ("class:mode-text", f"{mode_label} mode"),
-                ("class:hint", " · "),
-                ("class:tool-count", context_label),
-                ("class:hint", " · "),
-                ("class:tool-count", f"{tool_total}"),
-                ("class:mode-text", f" skill{'s' if tool_total != 1 else ''}"),
-                ("class:hint", " · "),
-                ("class:hint", "↓ to complete"),
-            ]
-            return FormattedText(parts)
-
-        def _get_prompt():
-            """Prompt: separator line + ❯"""
-            from prompt_toolkit.formatted_text import FormattedText
-            sep = "─" * _term_width
-            return FormattedText([
-                ("class:separator", sep + "\n"),
-                ("", REPL_PROMPT_LINE_PREFIX),
-            ])
-
-        from prompt_toolkit.filters import Condition
-
-        def _should_complete_while_typing(buf_text: str) -> bool:
-            if buf_text.startswith("/") and " " not in buf_text:
-                return True
-            at_pos = buf_text.rfind("@")
-            return at_pos != -1 and " " not in buf_text[at_pos:]
-
-        history_dir = Path.home() / ".ohmycode"
-        history_dir.mkdir(parents=True, exist_ok=True)
-        history_path = str(history_dir / "history")
-
-        _completer = SlashCompleter(available_skills)
-
-        _kb = KeyBindings()
-
-        @_kb.add("enter")
-        def _handle_enter(event):
-            buf = event.current_buffer
-            cs = buf.complete_state
-            if cs and cs.completions:
-                # Menu open: apply navigated item, or fall back to first candidate.
-                buf.apply_completion(cs.current_completion or cs.completions[0])
-            else:
-                buf.validate_and_handle()
-
-        pt_session = PromptSession(
-            history=FileHistory(history_path),
-            completer=_completer,
-            style=pt_style,
-            complete_while_typing=Condition(
-                lambda: _should_complete_while_typing(
-                    pt_session.app.current_buffer.text
-                )
-            ),
-            key_bindings=_kb,
-            bottom_toolbar=_get_toolbar,
-            prompt_continuation="   ",
+        pt_session, _get_prompt = build_prompt_session(
+            available_skills, conv, config, get_current_mode
         )
-        _patch_pt_completion_menu_align_left(pt_session)
         use_prompt_toolkit = True
     except ImportError:
         pass
 
-    # Console that bypasses patch_stdout's non-TTY wrapper by writing directly
-    # to sys.__stdout__ (the original fd, unaffected by prompt_toolkit).
     _pt_console = Console(file=sys.__stdout__, force_terminal=True, highlight=False)
 
     def _repl_print(*args: Any, **kwargs: Any) -> None:
-        """Send Rich output through patch_stdout when using prompt_toolkit.
-
-        Raw console.print between prompts desyncs the terminal cursor from PT's
-        renderer; macOS IME (e.g. Chinese) often breaks after large prints
-        (e.g. /skills). patch_stdout hides/restores the prompt layer correctly.
-        """
         if use_prompt_toolkit and pt_session is not None:
             from prompt_toolkit.patch_stdout import patch_stdout
-
             with patch_stdout():
                 _pt_console.print(*args, **kwargs)
         else:
             console.print(*args, **kwargs)
 
     def _repl_print_plain(*args: Any, **kwargs: Any) -> None:
-        """Plain print (no Rich/ANSI). Use when patch_stdout breaks escape sequences."""
         if use_prompt_toolkit and pt_session is not None:
             from prompt_toolkit.patch_stdout import patch_stdout
-
             with patch_stdout():
                 print(*args, **kwargs, flush=True)
         else:
             print(*args, **kwargs, flush=True)
 
-    _INTERRUPT = object()  # sentinel: user pressed Ctrl+C at the prompt
+    _INTERRUPT = object()
 
     async def _read_line() -> str | None | object:
         if use_prompt_toolkit and pt_session is not None:
@@ -792,16 +381,11 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
             except EOFError:
                 return None
 
-    current_mode = config.mode
-
-    async def _stream_with_cancel(conv: ConversationLoop) -> str:
+    async def _stream_with_cancel(c: ConversationLoop) -> str:
         """Run render_stream as a Task; cancel it if cancel_event fires."""
-        render_task = asyncio.create_task(render_stream(conv))
+        render_task = asyncio.create_task(render_stream(c))
         if cancel_event is None:
             return await render_task
-        # Use a short-polling wrapper so the thread can exit when cancelled.
-        # threading.Event.wait() with no timeout blocks forever and cannot be
-        # interrupted by asyncio cancellation, causing a 300 s executor join on exit.
         stop_polling = threading.Event()
 
         def _poll_cancel():
@@ -844,7 +428,6 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
             continue
 
         if user_input is None:
-            # EOF (Ctrl+D)
             _repl_print_plain("\nGoodbye.")
             break
 
@@ -857,173 +440,28 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
             parts = user_input.split(maxsplit=1)
             cmd = parts[0].lower()
 
-            if cmd in ("/exit", "/quit"):
-                _repl_print_plain("Goodbye.")
-                if conv.messages:
-                    save_conversation(conv.messages, config.provider, config.model, config.mode, filename=resumed_filename)
-                    _repl_print_plain("Conversation saved.")
-                # Memory extraction (silent failure)
-                if conv.messages and conv._provider:
-                    try:
-                        memories = await extract_memories_from_conversation(
-                            conv.messages, conv._provider, config.model
-                        )
-                        if memories:
-                            _store = BTreeMemoryStore(get_project_memory_dir(os.getcwd()))
-                            _store.ensure_tree()
-                            for m in memories:
-                                _store.save(m["name"], m["type"], m["content"])
-                    except Exception:
-                        pass
-                return 0
-
-            elif cmd == "/clear":
-                conv.messages.clear()
-                conv.auto_approved.clear()
-                _repl_print("[dim]Conversation cleared.[/dim]")
-                continue
-
-            elif cmd == "/new":
-                if conv.messages:
-                    try:
-                        saved = save_conversation(
-                            conv.messages, config.provider, config.model, config.mode
-                        )
-                        _repl_print(f"[dim]Conversation saved: {saved}[/dim]")
-                    except Exception as e:
-                        _repl_print(f"[red]Failed to save conversation: {e}[/red]")
-                        _repl_print("[dim]Conversation not reset. Fix the error and try again.[/dim]")
-                        continue
-                conv = ConversationLoop(config=config, confirm_fn=confirm_tool_call)
-                conv.initialize()
-                resumed_filename = None
-                _repl_print("[dim]New conversation started.[/dim]")
-                continue
-
-            elif cmd == "/mode":
-                if len(parts) < 2:
-                    _repl_print(f"[dim]Current mode: {current_mode}[/dim]")
-                    _repl_print("[dim]Usage: /mode <default|auto|plan>[/dim]")
-                else:
-                    new_mode = parts[1].strip()
-                    if new_mode not in ("default", "auto", "plan"):
-                        _repl_print(f"[red]Unknown mode: {new_mode}[/red]")
-                    else:
-                        current_mode = new_mode
-                        # Rebuild config and loop to apply new mode
-                        new_overrides = dict(config_overrides)
-                        new_overrides["mode"] = current_mode
-                        config = load_config(new_overrides)
-                        conv = ConversationLoop(
-                            config=config, confirm_fn=confirm_tool_call
-                        )
-                        conv.initialize()
-                        _repl_print(f"[dim]Mode switched to: {current_mode}[/dim]")
-                continue
-
-            elif cmd == "/status":
-                status = conv.get_status_snapshot()
-                _repl_print()
-                _repl_print("  [bold]Session status[/]")
-                _repl_print(
-                    f"    [dim]Model:[/] {status['provider']} / {status['model']}    "
-                    f"[dim]Mode:[/] {status['mode']}"
-                )
-                _repl_print(
-                    f"    [dim]Messages:[/] {status['message_count']}    "
-                    f"[dim]Context:[/] {status['used_tokens']:,} / {status['effective_window']:,} tokens "
-                    f"([bold]{status['usage_percent']:.1f}%[/])"
-                )
-                _repl_print(
-                    f"    [dim]Budget:[/] {status['token_budget']:,} total, "
-                    f"{status['output_reserved']:,} reserved for output"
-                )
-                _repl_print(
-                    f"    [dim]Compression stage:[/] {status['compression_stage']}"
-                )
-                _repl_print()
-                continue
-
-            elif user_input.startswith("/memory"):
-                parts = user_input.split(maxsplit=2)
-                _store = BTreeMemoryStore(get_project_memory_dir(os.getcwd()))
-                _store.ensure_tree()
-                if len(parts) == 1 or parts[1] == "list":
-                    memories = _store.list_all()
-                    if memories:
-                        for m in memories:
-                            _repl_print(f"  [{m['type']}] {m['name']} ({m['filename']})")
-                    else:
-                        _repl_print("[dim]No memories saved.[/dim]")
-                elif parts[1] == "delete" and len(parts) > 2:
-                    target = parts[2]
-                    deleted = any(_store.delete(cat, target) for cat in VALID_CATEGORIES)
-                    if deleted:
-                        _repl_print(f"[dim]Deleted {target}[/dim]")
-                    else:
-                        _repl_print(f"[yellow]Memory not found: {target}[/yellow]")
-                continue
-
-            elif cmd == "/vchange":
-                arg = parts[1].strip() if len(parts) > 1 else None
-                step = None
-                if arg is not None:
-                    try:
-                        step = int(arg)
-                    except ValueError:
-                        _repl_print("[red]Usage: /vchange [-N|N]  (e.g. /vchange -1)[/red]")
-                        continue
-                run_vchange(step)
-                continue
-
-            elif cmd == "/think":
-                arg = parts[1].strip().lower() if len(parts) > 1 else ""
-                valid = ("low", "medium", "high", "off")
-                if not arg:
-                    state = conv.think or "off"
-                    _repl_print(f"[dim]Thinking: {state}[/dim]")
-                elif arg not in valid:
-                    _repl_print("[red]Usage: /think low|medium|high|off[/red]")
-                elif arg == "off":
-                    conv.think = None
-                    _repl_print("[dim]Thinking disabled.[/dim]")
-                else:
-                    conv.think = arg
-                    _repl_print(f"[dim]Thinking set to: {arg}[/dim]")
-                continue
-
-            elif cmd == "/skills":
-                if available_skills:
-                    _repl_print("\n  [bold]Available skills:[/]")
-                    # Longest skill name for column alignment
-                    max_name = max(len(s) for s in available_skills) + 1
-                    for skill_name, info in sorted(available_skills.items()):
-                        padded = f"/{skill_name}".ljust(max_name + 1)
-                        desc = info.description
-                        # Truncate description to 60 chars
-                        if len(desc) > 60:
-                            desc = desc[:57] + "..."
-                        _repl_print(f"    [cyan]{padded}[/] [dim]{desc}[/]")
-                    _repl_print()
-                else:
-                    _repl_print("[dim]No skills found.[/dim]")
-                continue
-
-            else:
-                skill_name = cmd.lstrip("/")
-                if skill_name in available_skills:
-                    arguments = parts[1] if len(parts) > 1 else ""
-                    skill_content = load_skill(available_skills[skill_name], arguments=arguments)
-                    conv.add_user_message(skill_content)
-                    finish_reason = await _stream_with_cancel(conv)
-                    if finish_reason == "max_turns":
-                        _repl_print("[yellow]Reached maximum turns limit.[/yellow]")
-                    elif finish_reason == "cancelled":
-                        _repl_print("\n[yellow](Interrupted — partial reply saved to history. Continue or /exit)[/yellow]")
-                else:
-                    _repl_print(f"[red]Unknown command: {cmd}[/red]")
-                    _repl_print("[dim]Available: /exit /clear /new /mode /status /memory /skills[/dim]")
-                continue
+            result = await handle_slash_command(
+                cmd=cmd,
+                parts=parts,
+                raw_input=user_input,
+                conv=conv,
+                config=config,
+                config_overrides=config_overrides,
+                skills=available_skills,
+                resumed_filename=resumed_filename,
+                repl_print=_repl_print,
+                repl_print_plain=_repl_print_plain,
+                stream_fn=_stream_with_cancel,
+                confirm_tool_call=confirm_tool_call,
+                get_current_mode=get_current_mode,
+                set_current_mode=set_current_mode,
+                set_conv=set_conv,
+                set_config=set_config,
+                set_resumed_filename=set_resumed_filename,
+            )
+            if isinstance(result, int):
+                return result
+            continue
 
         # ── Normal user message ──────────────────────────────────────────
         expanded_input, image_blocks, ref_warnings = expand_file_refs(user_input, os.getcwd())
@@ -1047,7 +485,6 @@ def run() -> int:
     """CLI main: parse args, run run_single, run_repl, or subcommands."""
     args = parse_args()
 
-    # Subcommand: ohmycode vchange [-1|1|...]
     if args.command == "vchange":
         step = None
         if args.command_arg is not None:

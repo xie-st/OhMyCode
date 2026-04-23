@@ -153,8 +153,8 @@ def test_clear_does_not_save_or_recreate_loop(tmp_path, monkeypatch):
 
 def test_new_builtin_registered():
     """Verify /new appears in the SlashCompleter._BUILTIN via source inspection."""
-    import ohmycode.cli as cli_mod
+    import ohmycode._cli.prompt_session as ps_mod
     import inspect
-    source = inspect.getsource(cli_mod)
+    source = inspect.getsource(ps_mod)
     assert '"/new"' in source
     assert "Save current conversation and start fresh" in source
