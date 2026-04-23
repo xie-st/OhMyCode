@@ -491,6 +491,7 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
                 "/exit": "Quit",
                 "/quit": "Quit (alias for /exit)",
                 "/clear": "Clear conversation",
+                "/new": "Save current conversation and start fresh",
                 "/mode": "Switch mode (default|auto|plan)",
                 "/status": "Show context and session status",
                 "/memory": "Manage memories",
@@ -726,6 +727,24 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
                 _repl_print("[dim]Conversation cleared.[/dim]")
                 continue
 
+            elif cmd == "/new":
+                if conv.messages:
+                    from ohmycode.storage.conversation import save_conversation
+                    try:
+                        saved = save_conversation(
+                            conv.messages, config.provider, config.model, config.mode
+                        )
+                        _repl_print(f"[dim]Conversation saved: {saved}[/dim]")
+                    except Exception as e:
+                        _repl_print(f"[red]Failed to save conversation: {e}[/red]")
+                        _repl_print("[dim]Conversation not reset. Fix the error and try again.[/dim]")
+                        continue
+                conv = ConversationLoop(config=config, confirm_fn=confirm_tool_call)
+                conv.initialize()
+                resumed_filename = None
+                _repl_print("[dim]New conversation started.[/dim]")
+                continue
+
             elif cmd == "/mode":
                 if len(parts) < 2:
                     _repl_print(f"[dim]Current mode: {current_mode}[/dim]")
@@ -847,7 +866,7 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
                         _repl_print("\n[yellow](Generation cancelled. Continue or /exit)[/yellow]")
                 else:
                     _repl_print(f"[red]Unknown command: {cmd}[/red]")
-                    _repl_print("[dim]Available: /exit /clear /mode /status /memory /skills[/dim]")
+                    _repl_print("[dim]Available: /exit /clear /new /mode /status /memory /skills[/dim]")
                 continue
 
         # ── Normal user message ──────────────────────────────────────────
