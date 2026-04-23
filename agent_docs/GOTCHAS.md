@@ -47,6 +47,14 @@ Rich output between `prompt_toolkit` prompts moves the terminal cursor without u
 
 - Fix: wrap prints in `prompt_toolkit.patch_stdout.patch_stdout()` (`_repl_print` in `cli.py`).
 
+## 12. Ctrl+C during streaming cannot be caught with `except KeyboardInterrupt` on Windows
+
+On Windows (ProactorEventLoop), pressing Ctrl+C while awaiting a network call causes asyncio to cancel the underlying Future, raising `asyncio.CancelledError` from deep inside the httpx/anyio stack. This exception propagates up through all user coroutines and is caught by `asyncio.run()`, which re-raises it as `KeyboardInterrupt` **outside** the user coroutine stack — any `except KeyboardInterrupt` in `render_stream()` or `run_turn()` never fires.
+
+Fix: register `signal.signal(SIGINT, ...)` before `asyncio.run()` to intercept the signal and set a `threading.Event`. Wrap `render_stream()` in an `asyncio.Task` and use `asyncio.wait()` to race it against the cancel event. On cancel, call `task.cancel()` to inject a controlled `CancelledError` inside the Task boundary, which `run_turn()` can catch and handle gracefully.
+
+Side-effect: any `AssistantMessage` with `tool_calls` that was written to history before the interrupt must have corresponding `ToolResultMessage` entries, or the next API call returns 400. `run_turn()` fills in placeholder `ToolResultMessage("Cancelled by user.")` for every unanswered tool call.
+
 ## 11. Anthropic thinking: adaptive vs manual, and max_tokens
 
 When `reasoning_effort` is set, the Anthropic provider must choose between two API modes:

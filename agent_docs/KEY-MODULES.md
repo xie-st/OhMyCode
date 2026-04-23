@@ -102,6 +102,12 @@ get_provider("name", api_key=...) -> Provider
 
 `ConversationLoop.think: str | None` — when set to `"low"`, `"medium"`, or `"high"`, `run_turn()` forwards it as `reasoning_effort` in `**kwargs` to `provider.stream()`. Providers translate this to their native API parameter (OpenAI: `reasoning_effort`; Anthropic: `thinking` with adaptive or manual extended thinking depending on model generation).
 
+**Cancellation handling in `run_turn()`** — `run_turn()` catches `asyncio.CancelledError` at two points:
+1. Inside the `provider.stream()` loop: saves partial `AssistantMessage(content=collected_text, tool_calls=[])` to history, yields `TurnComplete(finish_reason="cancelled")`, then re-raises.
+2. Inside the permission-check / tool-execution block: fills in `ToolResultMessage("Cancelled by user.")` for every `tool_call_id` that has no response (required by the Anthropic API), yields `TurnComplete(finish_reason="cancelled")`, then re-raises.
+
+**Ctrl+C wiring in `cli.py`** — `run()` registers `signal.signal(SIGINT, ...)` before `asyncio.run()` to intercept the signal into a `threading.Event`. `_stream_with_cancel()` inside `run_repl()` wraps `render_stream()` in an `asyncio.Task` and uses `asyncio.wait()` to race it against the event; on cancel it calls `task.cancel()` so the `CancelledError` stays inside the Task boundary and never escapes to `asyncio.run()`.
+
 ## core/messages.py
 
 Message types: `UserMessage`, `AssistantMessage`, `ToolResultMessage`, `SystemMessage`  

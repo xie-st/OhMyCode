@@ -27,18 +27,23 @@ cli.py → core/loop.py → providers/base.py → providers/openai.py
 User input → cli.py
   → file_ref.expand_file_refs()  [@path tokens replaced with file contents]
   → ConversationLoop.add_user_message()
-  → ConversationLoop.run_turn()  [async generator]
-    → context.maybe_compress()   [if near token limit]
-    → provider.stream()          [call LLM API, streaming]
-      ← yield TextChunk          [text fragment]
-      ← yield ToolCallStart      [tool call request]
-    → permissions.check_permission()  [permission check]
-    → tools.run_tool_calls()     [partitioned concurrent tool execution]
-      ← yield ToolCallResult     [tool results]
-    → append ToolResultMessage to messages
-    → continue loop (model sees tool results and may reply again)
-  ← yield TurnComplete           [turn finished]
-← cli.py render_stream() renders to terminal
+  → _stream_with_cancel()        [asyncio.Task wrapper; races render vs cancel_event]
+    → ConversationLoop.run_turn()  [async generator]
+        → context.maybe_compress()   [if near token limit]
+        → provider.stream()          [call LLM API, streaming]
+          ← yield TextChunk          [text fragment]
+          ← yield ToolCallStart      [tool call request]
+        → permissions.check_permission()  [permission check]
+        → tools.run_tool_calls()     [partitioned concurrent tool execution]
+          ← yield ToolCallResult     [tool results]
+        → append ToolResultMessage to messages
+        → continue loop (model sees tool results and may reply again)
+      ← yield TurnComplete           [finish_reason: "stop"|"tool_use"|"cancelled"|"max_turns"]
+    ← cli.py render_stream() renders to terminal
+  [Ctrl+C] → signal handler sets threading.Event
+           → _stream_with_cancel cancels Task → CancelledError propagates into run_turn()
+           → run_turn() saves partial AssistantMessage + fills placeholder ToolResultMessages
+           → yields TurnComplete(finish_reason="cancelled"), re-raises CancelledError
 ```
 
 ## Core modules

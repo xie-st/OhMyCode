@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import AsyncIterator, Callable, Awaitable, Any
 
@@ -201,9 +202,22 @@ class ConversationLoop:
                     elif isinstance(event, TurnComplete):
                         last_usage = event.usage
                         last_finish_reason = event.finish_reason
+            except asyncio.CancelledError:
+                # render_stream task was cancelled by Ctrl+C — save partial reply
+                if collected_text:
+                    self.messages.append(AssistantMessage(content=collected_text, tool_calls=[]))
+                yield TurnComplete(finish_reason="cancelled", usage=last_usage)
+                raise
             except Exception as e:
                 yield TextChunk(text=f"\n[API Error: {e}]\n")
                 yield TurnComplete(finish_reason="error", usage=TokenUsage(0, 0, 0))
+                return
+
+            # ── Handle cancellation via flag (conv.cancel() path) ─────────────
+            if self._cancelled:
+                if collected_text:
+                    self.messages.append(AssistantMessage(content=collected_text, tool_calls=[]))
+                yield TurnComplete(finish_reason="cancelled", usage=last_usage)
                 return
 
             # ── Record assistant message ───────────────────────────────────────
@@ -227,58 +241,24 @@ class ConversationLoop:
                 yield TurnComplete(finish_reason=last_finish_reason, usage=last_usage)
                 return
 
-            # ── Permission checks ──────────────────────────────────────────────
+            # ── Permission checks + tool execution ────────────────────────────
+            # Track which tool_call_ids already have a ToolResultMessage so we
+            # can fill in the blanks if the task is cancelled mid-way.
+            responded_ids: set[str] = set()
             permitted_calls: list[dict] = []
 
-            for tc in collected_tool_calls:
-                perm = check_permission(
-                    tool_name=tc.tool_name,
-                    params=tc.params,
-                    mode=self.config.mode,
-                    rules=self.config.rules,
-                    auto_approved=self.auto_approved,
-                )
-
-                if perm.action == "deny":
-                    error_msg = f"Permission denied: {perm.reason}"
-                    self.messages.append(
-                        ToolResultMessage(
-                            tool_use_id=tc.tool_use_id,
-                            content=error_msg,
-                            is_error=True,
-                        )
+            try:
+                for tc in collected_tool_calls:
+                    perm = check_permission(
+                        tool_name=tc.tool_name,
+                        params=tc.params,
+                        mode=self.config.mode,
+                        rules=self.config.rules,
+                        auto_approved=self.auto_approved,
                     )
-                    yield ToolCallResult(
-                        tool_use_id=tc.tool_use_id,
-                        result=error_msg,
-                        is_error=True,
-                    )
-                    continue
 
-                if perm.action == "ask" and self.confirm_fn is not None:
-                    answer = await self.confirm_fn(tc.tool_name, tc.params)
-                    answer = answer.strip().lower()
-                    if answer == "a":
-                        # Auto-approve this tool for the rest of the session
-                        self.auto_approved[tc.tool_name] = True
-                        permitted_calls.append(
-                            {
-                                "tool_name": tc.tool_name,
-                                "tool_use_id": tc.tool_use_id,
-                                "params": tc.params,
-                            }
-                        )
-                    elif answer == "y":
-                        permitted_calls.append(
-                            {
-                                "tool_name": tc.tool_name,
-                                "tool_use_id": tc.tool_use_id,
-                                "params": tc.params,
-                            }
-                        )
-                    else:
-                        # User denied
-                        error_msg = "User denied tool execution."
+                    if perm.action == "deny":
+                        error_msg = f"Permission denied: {perm.reason}"
                         self.messages.append(
                             ToolResultMessage(
                                 tool_use_id=tc.tool_use_id,
@@ -286,39 +266,94 @@ class ConversationLoop:
                                 is_error=True,
                             )
                         )
+                        responded_ids.add(tc.tool_use_id)
                         yield ToolCallResult(
                             tool_use_id=tc.tool_use_id,
                             result=error_msg,
                             is_error=True,
                         )
-                else:
-                    # allow (or run ask without confirm_fn)
-                    permitted_calls.append(
-                        {
-                            "tool_name": tc.tool_name,
-                            "tool_use_id": tc.tool_use_id,
-                            "params": tc.params,
-                        }
-                    )
+                        continue
 
-            # ── Execute permitted tool calls ───────────────────────────────────
-            if permitted_calls:
-                results = await run_tool_calls(permitted_calls, ctx)
-                for call in permitted_calls:
-                    tid = call["tool_use_id"]
-                    tool_result = results[tid]
-                    self.messages.append(
-                        ToolResultMessage(
+                    if perm.action == "ask" and self.confirm_fn is not None:
+                        answer = await self.confirm_fn(tc.tool_name, tc.params)
+                        answer = answer.strip().lower()
+                        if answer == "a":
+                            # Auto-approve this tool for the rest of the session
+                            self.auto_approved[tc.tool_name] = True
+                            permitted_calls.append(
+                                {
+                                    "tool_name": tc.tool_name,
+                                    "tool_use_id": tc.tool_use_id,
+                                    "params": tc.params,
+                                }
+                            )
+                        elif answer == "y":
+                            permitted_calls.append(
+                                {
+                                    "tool_name": tc.tool_name,
+                                    "tool_use_id": tc.tool_use_id,
+                                    "params": tc.params,
+                                }
+                            )
+                        else:
+                            # User denied
+                            error_msg = "User denied tool execution."
+                            self.messages.append(
+                                ToolResultMessage(
+                                    tool_use_id=tc.tool_use_id,
+                                    content=error_msg,
+                                    is_error=True,
+                                )
+                            )
+                            responded_ids.add(tc.tool_use_id)
+                            yield ToolCallResult(
+                                tool_use_id=tc.tool_use_id,
+                                result=error_msg,
+                                is_error=True,
+                            )
+                    else:
+                        # allow (or run ask without confirm_fn)
+                        permitted_calls.append(
+                            {
+                                "tool_name": tc.tool_name,
+                                "tool_use_id": tc.tool_use_id,
+                                "params": tc.params,
+                            }
+                        )
+
+                # ── Execute permitted tool calls ───────────────────────────────
+                if permitted_calls:
+                    results = await run_tool_calls(permitted_calls, ctx)
+                    for call in permitted_calls:
+                        tid = call["tool_use_id"]
+                        tool_result = results[tid]
+                        self.messages.append(
+                            ToolResultMessage(
+                                tool_use_id=tid,
+                                content=tool_result.output,
+                                is_error=tool_result.is_error,
+                            )
+                        )
+                        responded_ids.add(tid)
+                        yield ToolCallResult(
                             tool_use_id=tid,
-                            content=tool_result.output,
+                            result=tool_result.output,
                             is_error=tool_result.is_error,
                         )
-                    )
-                    yield ToolCallResult(
-                        tool_use_id=tid,
-                        result=tool_result.output,
-                        is_error=tool_result.is_error,
-                    )
+
+            except asyncio.CancelledError:
+                # Fill in placeholder results for any tool_calls without a response
+                for tc in collected_tool_calls:
+                    if tc.tool_use_id not in responded_ids:
+                        self.messages.append(
+                            ToolResultMessage(
+                                tool_use_id=tc.tool_use_id,
+                                content="Cancelled by user.",
+                                is_error=False,
+                            )
+                        )
+                yield TurnComplete(finish_reason="cancelled", usage=last_usage)
+                raise
 
             # Continue loop: model sees tool results and produces next reply
 

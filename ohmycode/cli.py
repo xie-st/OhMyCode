@@ -6,7 +6,9 @@ import argparse
 import asyncio
 import json
 import os
+import signal
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -396,6 +398,14 @@ async def render_stream(conv: ConversationLoop) -> str:
             console.print(f"\n  [dim]{' · '.join(stats_parts)}[/dim]")
             tool_count = 0
 
+    # Ensure spinner is cleaned up if loop exits early (e.g. CancelledError)
+    if spinner_task and not spinner_task.done():
+        spinner_task.cancel()
+        try:
+            await spinner_task
+        except asyncio.CancelledError:
+            pass
+
     return finish_reason
 
 
@@ -422,7 +432,7 @@ async def run_single(prompt: str, config_overrides: dict[str, Any]) -> int:
 # ── REPL mode ─────────────────────────────────────────────────────────────────
 
 
-async def run_repl(config_overrides: dict[str, Any]) -> int:
+async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Event | None = None) -> int:
     """Interactive REPL loop; supports /exit, /clear, /mode, etc."""
     config = load_config(config_overrides)
     conv = ConversationLoop(config=config, confirm_fn=confirm_tool_call)
@@ -665,31 +675,67 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
         else:
             print(*args, **kwargs, flush=True)
 
-    async def _read_line() -> str | None:
+    _INTERRUPT = object()  # sentinel: user pressed Ctrl+C at the prompt
+
+    async def _read_line() -> str | None | object:
         if use_prompt_toolkit and pt_session is not None:
             try:
                 return await pt_session.prompt_async(_get_prompt)
-            except (EOFError, KeyboardInterrupt):
+            except KeyboardInterrupt:
+                return _INTERRUPT
+            except EOFError:
                 return None
         else:
             loop = asyncio.get_event_loop()
             try:
                 line = await loop.run_in_executor(None, lambda: input("❯ "))
                 return line
-            except (EOFError, KeyboardInterrupt):
+            except KeyboardInterrupt:
+                return _INTERRUPT
+            except EOFError:
                 return None
 
     current_mode = config.mode
 
+    async def _stream_with_cancel(conv: ConversationLoop) -> str:
+        """Run render_stream as a Task; cancel it if cancel_event fires."""
+        render_task = asyncio.create_task(render_stream(conv))
+        if cancel_event is None:
+            return await render_task
+        cancel_fut: asyncio.Future = asyncio.ensure_future(
+            asyncio.to_thread(cancel_event.wait)
+        )
+        done, _ = await asyncio.wait(
+            {render_task, cancel_fut},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if cancel_fut in done:
+            cancel_event.clear()
+            render_task.cancel()
+            try:
+                await render_task
+            except asyncio.CancelledError:
+                pass
+            return "cancelled"
+        else:
+            cancel_fut.cancel()
+            try:
+                await cancel_fut
+            except (asyncio.CancelledError, Exception):
+                pass
+            return render_task.result()
+
     while True:
-        try:
-            user_input = await _read_line()
-        except KeyboardInterrupt:
+        user_input = await _read_line()
+
+        if user_input is _INTERRUPT:
+            if cancel_event:
+                cancel_event.clear()
             _repl_print("\n[yellow](Use /exit to quit)[/yellow]")
             continue
 
         if user_input is None:
-            # EOF
+            # EOF (Ctrl+D)
             _repl_print_plain("\nGoodbye.")
             break
 
@@ -857,13 +903,11 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
                     arguments = parts[1] if len(parts) > 1 else ""
                     skill_content = load_skill(available_skills[skill_name], arguments=arguments)
                     conv.add_user_message(skill_content)
-                    try:
-                        finish_reason = await render_stream(conv)
-                        if finish_reason == "max_turns":
-                            _repl_print("[yellow]Reached maximum turns limit.[/yellow]")
-                    except KeyboardInterrupt:
-                        conv.cancel()
-                        _repl_print("\n[yellow](Generation cancelled. Continue or /exit)[/yellow]")
+                    finish_reason = await _stream_with_cancel(conv)
+                    if finish_reason == "max_turns":
+                        _repl_print("[yellow]Reached maximum turns limit.[/yellow]")
+                    elif finish_reason == "cancelled":
+                        _repl_print("\n[yellow](Interrupted — partial reply saved to history. Continue or /exit)[/yellow]")
                 else:
                     _repl_print(f"[red]Unknown command: {cmd}[/red]")
                     _repl_print("[dim]Available: /exit /clear /new /mode /status /memory /skills[/dim]")
@@ -875,16 +919,11 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
             _repl_print(f"  [yellow]{w}[/yellow]")
         conv.add_user_message(expanded_input, image_blocks=image_blocks or None)
 
-        gen_task: asyncio.Task | None = None
-        try:
-            finish_reason = await render_stream(conv)
-            if finish_reason == "max_turns":
-                _repl_print(
-                    "[yellow]Reached maximum turns limit.[/yellow]"
-                )
-        except KeyboardInterrupt:
-            conv.cancel()
-            _repl_print("\n[yellow](Generation cancelled. Continue or /exit)[/yellow]")
+        finish_reason = await _stream_with_cancel(conv)
+        if finish_reason == "max_turns":
+            _repl_print("[yellow]Reached maximum turns limit.[/yellow]")
+        elif finish_reason == "cancelled":
+            _repl_print("\n[yellow](Interrupted — partial reply saved to history. Continue or /exit)[/yellow]")
 
     return 0
 
@@ -921,4 +960,9 @@ def run() -> int:
     if args.prompt:
         return asyncio.run(run_single(args.prompt, config_overrides))
     else:
-        return asyncio.run(run_repl(config_overrides))
+        cancel_event = threading.Event()
+        old_handler = signal.signal(signal.SIGINT, lambda s, f: cancel_event.set())
+        try:
+            return asyncio.run(run_repl(config_overrides, cancel_event=cancel_event))
+        finally:
+            signal.signal(signal.SIGINT, old_handler)
