@@ -69,6 +69,12 @@ When `reasoning_effort` is set, the Anthropic provider must choose between two A
 
 Also, enabling thinking requires `max_tokens` to be large enough (≥ 16000); the default 4096 causes an API error.
 
+## 15. Sub-agent inherits parent config via ToolContext
+
+`AgentTool` creates a new `ConversationLoop` for the sub-agent. Using `OhMyCodeConfig()` (the default constructor) drops `api_key`, `model`, and `provider`, causing the sub-agent to fail with connection timeouts.
+
+Fix: pass `config=self.config` when building the root `ToolContext` in `ConversationLoop.initialize()`. `AgentTool.execute()` then does `copy.copy(ctx.config)` and overrides only `mode`, preserving all credentials.
+
 ## 14. ThinkingChunk event passthrough requires explicit handling in loop.py
 
 `run_turn()` uses explicit `isinstance` branches to decide what to do with each provider event. Unknown event types are **silently dropped** — they do not pass through automatically. When adding a new event type (e.g. `ThinkingChunk`), you must add a corresponding `elif isinstance(event, ThinkingChunk): yield event` branch in `run_turn()`, otherwise it never reaches the CLI.

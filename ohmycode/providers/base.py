@@ -63,3 +63,13 @@ def auto_import_providers() -> None:
     for module_info in pkgutil.iter_modules([str(package_dir)]):
         if module_info.name != "base":
             importlib.import_module(f"ohmycode.providers.{module_info.name}")
+
+
+async def stream_to_text(provider: Any, messages: list, model: str, system: str = "") -> str:
+    """Call provider.stream() and collect all TextChunk text into a single string."""
+    from ohmycode.core.messages import TextChunk
+    collected = ""
+    async for event in provider.stream(messages=messages, tools=[], system=system, model=model):
+        if isinstance(event, TextChunk):
+            collected += event.text
+    return collected

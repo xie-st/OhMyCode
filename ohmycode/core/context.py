@@ -239,15 +239,8 @@ class ContextManager:
         from ohmycode.core.messages import AssistantMessage as AM, UserMessage as UM
 
         request_messages = [UM(content=prompt)]
-        # provider.complete is expected to return an AssistantMessage or string
-        result = await provider.complete(
-            messages=request_messages,
-            model=model,
-            system_prompt="You are a helpful assistant that summarizes conversations.",
-            tools=[],
+        from ohmycode.providers.base import stream_to_text
+        return await stream_to_text(
+            provider, request_messages, model,
+            system="You are a helpful assistant that summarizes conversations.",
         )
-        if isinstance(result, str):
-            return result
-        if hasattr(result, "content"):
-            return result.content
-        return str(result)

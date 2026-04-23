@@ -20,6 +20,7 @@ class ToolContext:
     agent_depth: int    # 0 = top-level agent
     cwd: str            # current working directory
     is_sub_agent: bool
+    config: Any = None  # parent OhMyCodeConfig, forwarded to sub-agents
     extra: dict = field(default_factory=dict)
 
 

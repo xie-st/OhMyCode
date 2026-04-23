@@ -40,22 +40,16 @@ class AgentTool(Tool):
         from ohmycode.config.config import OhMyCodeConfig
 
         try:
-            # Sub-agent config and loop
-            config = OhMyCodeConfig()
-            # Inherit mode
+            # Inherit parent config so api_key/model/provider are preserved
+            import copy
+            if ctx.config is not None:
+                config = copy.copy(ctx.config)
+            else:
+                config = OhMyCodeConfig()
             config.mode = ctx.mode
 
             sub_loop = ConversationLoop(config)
             sub_loop.initialize()
-
-            # New context with incremented depth
-            sub_ctx = ToolContext(
-                mode=ctx.mode,
-                agent_depth=ctx.agent_depth + 1,
-                cwd=ctx.cwd,
-                is_sub_agent=True,
-                extra=ctx.extra.copy() if ctx.extra else {},
-            )
 
             # Add user message to sub-agent
             sub_loop.add_user_message(prompt)

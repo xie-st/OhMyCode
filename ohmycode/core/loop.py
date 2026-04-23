@@ -151,6 +151,7 @@ class ConversationLoop:
             agent_depth=0,
             cwd=os.getcwd(),
             is_sub_agent=False,
+            config=self.config,
         )
 
         # Latest usage (updated after each provider call)

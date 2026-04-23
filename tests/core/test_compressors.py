@@ -78,23 +78,24 @@ def test_snip_minimal_messages():
 def test_circuit_breaker_raises_after_failures():
     """Circuit breaker should raise RuntimeError after 3 failures."""
     import asyncio
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     mgr = ContextManager(token_budget=1000, output_reserved=200)
     messages = [UserMessage(content="hello")]
-
-    # Simulate a broken provider
     broken_provider = MagicMock()
-    broken_provider.complete = AsyncMock(side_effect=Exception("API error"))
 
     async def run():
-        for _ in range(3):
-            try:
+        with patch(
+            "ohmycode.providers.base.stream_to_text",
+            new=AsyncMock(side_effect=Exception("API error")),
+        ):
+            for _ in range(3):
+                try:
+                    await mgr.micro_compact(messages, broken_provider, "model")
+                except Exception:
+                    pass
+            # 4th call should raise RuntimeError (circuit breaker open)
+            with pytest.raises(RuntimeError, match="Circuit breaker"):
                 await mgr.micro_compact(messages, broken_provider, "model")
-            except Exception:
-                pass
-        # 4th call should raise RuntimeError (circuit breaker open)
-        with pytest.raises(RuntimeError, match="Circuit breaker"):
-            await mgr.micro_compact(messages, broken_provider, "model")
 
     asyncio.run(run())

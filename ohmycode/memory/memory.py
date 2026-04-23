@@ -315,13 +315,11 @@ async def extract_memories_from_conversation(
             f"{conversation_text}"
         )
         request = [UserMessage(content=prompt)]
-        result = await provider.complete(
-            messages=request,
-            model=model,
-            system_prompt="You are a helpful assistant that extracts memorable facts from conversations.",
-            tools=[],
+        from ohmycode.providers.base import stream_to_text
+        raw_text = await stream_to_text(
+            provider, request, model,
+            system="You are a helpful assistant that extracts memorable facts from conversations.",
         )
-        raw_text = result.content if hasattr(result, "content") else str(result)
         return parse_extraction_response(raw_text)
     except Exception:
         return []

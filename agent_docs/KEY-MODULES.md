@@ -54,6 +54,7 @@ class ToolContext:
     agent_depth: int    # 0 = top level
     cwd: str
     is_sub_agent: bool
+    config: Any = None  # parent OhMyCodeConfig; forwarded to sub-agents to preserve api_key/model/provider
 
 @dataclass
 class ToolResult:
@@ -88,6 +89,9 @@ register_provider("name", MyProvider)
 
 # Resolve
 get_provider("name", api_key=...) -> Provider
+
+# Collect full text response from a provider (used by memory extraction and context compression)
+await stream_to_text(provider, messages, model, system="") -> str
 ```
 
 `Provider.stream()` must yield events in this order:
