@@ -68,23 +68,18 @@ class ConversationLoop:
 
         self._provider = get_provider(self.config.provider, **provider_kwargs)
 
-        from ohmycode.memory.memory import load_memory_index, BTreeMemoryStore, get_project_memory_dir
-        from ohmycode.memory.recall import RecallEngine
+        from ohmycode.memory.memory import BTreeMemoryStore, get_project_memory_dir
 
         cwd = os.getcwd()
         project_instructions = find_project_instructions(cwd)
 
-        # Try B+-Tree memory first; fall back to legacy flat index
         try:
             mem_dir = get_project_memory_dir(cwd)
-            self._memory_store = BTreeMemoryStore(mem_dir)
-            self._memory_store.ensure_tree()
-            self._recall_engine = RecallEngine(self._memory_store)
-            memory_content = self._memory_store.get_root_index()
+            store = BTreeMemoryStore(mem_dir)
+            store.ensure_tree()
+            memory_content = store.get_root_index()
         except Exception:
-            self._memory_store = None
-            self._recall_engine = None
-            memory_content = load_memory_index()
+            memory_content = ""
 
         self._system_prompt = build_system_prompt(
             mode=self.config.mode,

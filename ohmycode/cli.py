@@ -6,9 +6,13 @@ import argparse
 import asyncio
 import json
 import os
+import re
+import shutil
 import signal
+import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -22,15 +26,24 @@ if sys.platform == "win32":
     except Exception:
         pass  # Not a real console (e.g. redirected output); safe to ignore
 
+from rich import box as rich_box
 from rich.console import Console
 from rich.markup import escape
+from rich.panel import Panel
 from rich.text import Text
 
 from ohmycode.config.config import load_config, OhMyCodeConfig
 from ohmycode.core.loop import ConversationLoop
 from ohmycode.core.messages import TextChunk, ThinkingChunk, ToolCallStart, ToolCallResult, TurnComplete
 from ohmycode.core.file_ref import expand_file_refs, get_at_completions
+from ohmycode.memory.memory import (
+    BTreeMemoryStore,
+    get_project_memory_dir,
+    VALID_CATEGORIES,
+    extract_memories_from_conversation,
+)
 from ohmycode.skills.loader import scan_skills, load_skill, SkillInfo
+from ohmycode.storage.conversation import load_conversation, save_conversation
 
 console = Console()
 
@@ -175,9 +188,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def run_vchange(step: int | None = None) -> int:
     """Version switch: step=None shows status, step=-1 goes back, step=1 goes forward. Returns exit code."""
-    import os
-    import subprocess
-
     cwd = os.getcwd()
 
     # Check git
@@ -307,7 +317,6 @@ class ThinkingBox:
         self._drawn_height: int = 0   # how many lines were printed last draw
 
     def push(self, text: str) -> None:
-        import time
         self._current += text
         # Split on newlines in the incoming chunk
         while "\n" in self._current:
@@ -367,8 +376,6 @@ class ThinkingBox:
 
 async def render_stream(conv: ConversationLoop) -> str:
     """Consume run_turn() event stream, render to terminal, return finish_reason."""
-    import time
-
     finish_reason = "stop"
     text_printed = False
     tool_count = 0
@@ -538,7 +545,6 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
     # Resume conversation
     resumed_filename: str | None = None
     if "_resume" in config_overrides and config_overrides["_resume"] is not None:
-        from ohmycode.storage.conversation import load_conversation
         result = load_conversation(config_overrides.get("_resume", ""))
         if result:
             conv.messages, metadata = result
@@ -548,10 +554,6 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
             console.print("[yellow]No conversation found to resume.[/yellow]\n")
 
     # Welcome banner (Claw-inspired: block letters + meta rows; no pixel sprite)
-    from rich.panel import Panel
-    from rich import box as rich_box
-
-    import re
     model_display = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", config.model)
 
     welcome_body = _build_repl_welcome_text(
@@ -666,7 +668,6 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
         })
 
         # Terminal width
-        import shutil
         _term_width = shutil.get_terminal_size().columns
 
         def _get_toolbar():
@@ -859,18 +860,19 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
             if cmd in ("/exit", "/quit"):
                 _repl_print_plain("Goodbye.")
                 if conv.messages:
-                    from ohmycode.storage.conversation import save_conversation
                     save_conversation(conv.messages, config.provider, config.model, config.mode, filename=resumed_filename)
                     _repl_print_plain("Conversation saved.")
                 # Memory extraction (silent failure)
                 if conv.messages and conv._provider:
                     try:
-                        from ohmycode.memory.memory import extract_memories_from_conversation, save_memory
                         memories = await extract_memories_from_conversation(
                             conv.messages, conv._provider, config.model
                         )
-                        for m in memories:
-                            save_memory(m["name"], m["type"], m["content"])
+                        if memories:
+                            _store = BTreeMemoryStore(get_project_memory_dir(os.getcwd()))
+                            _store.ensure_tree()
+                            for m in memories:
+                                _store.save(m["name"], m["type"], m["content"])
                     except Exception:
                         pass
                 return 0
@@ -883,7 +885,6 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
 
             elif cmd == "/new":
                 if conv.messages:
-                    from ohmycode.storage.conversation import save_conversation
                     try:
                         saved = save_conversation(
                             conv.messages, config.provider, config.model, config.mode
@@ -945,19 +946,22 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
 
             elif user_input.startswith("/memory"):
                 parts = user_input.split(maxsplit=2)
-                from ohmycode.memory.memory import list_memories, delete_memory
+                _store = BTreeMemoryStore(get_project_memory_dir(os.getcwd()))
+                _store.ensure_tree()
                 if len(parts) == 1 or parts[1] == "list":
-                    memories = list_memories()
+                    memories = _store.list_all()
                     if memories:
                         for m in memories:
                             _repl_print(f"  [{m['type']}] {m['name']} ({m['filename']})")
                     else:
                         _repl_print("[dim]No memories saved.[/dim]")
                 elif parts[1] == "delete" and len(parts) > 2:
-                    if delete_memory(parts[2]):
-                        _repl_print(f"[dim]Deleted {parts[2]}[/dim]")
+                    target = parts[2]
+                    deleted = any(_store.delete(cat, target) for cat in VALID_CATEGORIES)
+                    if deleted:
+                        _repl_print(f"[dim]Deleted {target}[/dim]")
                     else:
-                        _repl_print(f"[yellow]Memory not found: {parts[2]}[/yellow]")
+                        _repl_print(f"[yellow]Memory not found: {target}[/yellow]")
                 continue
 
             elif cmd == "/vchange":

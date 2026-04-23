@@ -11,6 +11,7 @@ from ohmycode.memory.memory import (
     get_project_memory_dir,
     MAX_INDEX_LINES,
     MAX_INDEX_BYTES,
+    _parse_frontmatter_meta,
 )
 
 
@@ -236,3 +237,25 @@ class TestRootIndexFormat:
         index = store.get_root_index()
         assert "user" in index and "2" in index
         assert "feedback" in index and "1" in index
+
+
+# ---- _parse_frontmatter_meta ----
+
+def test_parse_frontmatter_happy():
+    content = "---\nname: My Memory\ntype: user\ncreated: 20250101\n---\n\nBody text."
+    name, mem_type = _parse_frontmatter_meta(content)
+    assert name == "My Memory"
+    assert mem_type == "user"
+
+
+def test_parse_frontmatter_no_frontmatter():
+    name, mem_type = _parse_frontmatter_meta("Just plain text")
+    assert name == "unknown"
+    assert mem_type == "general"
+
+
+def test_parse_frontmatter_partial():
+    content = "---\nname: Partial\n---\nBody"
+    name, mem_type = _parse_frontmatter_meta(content)
+    assert name == "Partial"
+    assert mem_type == "general"
