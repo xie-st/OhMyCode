@@ -42,6 +42,7 @@ class ConversationLoop:
         self._cancelled: bool = False
         self._provider: Any = None
         self._system_prompt: str = ""
+        self.think: str | None = None
         self.context_mgr = ContextManager(
             token_budget=config.token_budget,
             output_reserved=config.output_tokens_reserved,
@@ -176,11 +177,15 @@ class ConversationLoop:
             collected_tool_calls: list[ToolCallStart] = []
 
             try:
+                stream_kwargs: dict[str, Any] = {}
+                if self.think:
+                    stream_kwargs["reasoning_effort"] = self.think
                 async for event in self._provider.stream(
                     messages=self.messages,
                     tools=tool_defs,
                     system=self._system_prompt,
                     model=self.config.model,
+                    **stream_kwargs,
                 ):
                     if self._cancelled:
                         break

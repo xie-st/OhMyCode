@@ -496,6 +496,7 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
                 "/memory": "Manage memories",
                 "/vchange": "Version switch (-1 back / 1 forward)",
                 "/skills": "List all skills",
+                "/think": "Set reasoning effort: low | medium | high | off",
             }
 
             def __init__(self, skills: dict[str, SkillInfo]) -> None:
@@ -796,6 +797,22 @@ async def run_repl(config_overrides: dict[str, Any]) -> int:
                         _repl_print("[red]Usage: /vchange [-N|N]  (e.g. /vchange -1)[/red]")
                         continue
                 run_vchange(step)
+                continue
+
+            elif cmd == "/think":
+                arg = parts[1].strip().lower() if len(parts) > 1 else ""
+                valid = ("low", "medium", "high", "off")
+                if not arg:
+                    state = conv.think or "off"
+                    _repl_print(f"[dim]Thinking: {state}[/dim]")
+                elif arg not in valid:
+                    _repl_print("[red]Usage: /think low|medium|high|off[/red]")
+                elif arg == "off":
+                    conv.think = None
+                    _repl_print("[dim]Thinking disabled.[/dim]")
+                else:
+                    conv.think = arg
+                    _repl_print(f"[dim]Thinking set to: {arg}[/dim]")
                 continue
 
             elif cmd == "/skills":

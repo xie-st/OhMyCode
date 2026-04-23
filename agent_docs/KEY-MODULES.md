@@ -100,6 +100,8 @@ get_provider("name", api_key=...) -> Provider
 
 `ConversationLoop.get_status_snapshot()` exposes current REPL/session status for `/status`, including message count, approximate used tokens, effective context window, usage percent, and the compression stage (`ok` | `snip` | `micro_compact` | `collapse` | `auto_compact`).
 
+`ConversationLoop.think: str | None` — when set to `"low"`, `"medium"`, or `"high"`, `run_turn()` forwards it as `reasoning_effort` in `**kwargs` to `provider.stream()`. Providers translate this to their native API parameter (OpenAI: `reasoning_effort`; Anthropic: `thinking` with adaptive or manual extended thinking depending on model generation).
+
 ## core/messages.py
 
 Message types: `UserMessage`, `AssistantMessage`, `ToolResultMessage`, `SystemMessage`  

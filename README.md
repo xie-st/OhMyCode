@@ -74,6 +74,7 @@ ohmycode --help
 | `/exit & /quit` | Quit (auto-saves + extracts memories) |
 | `/clear` | Clear history |
 | `/mode <mode>` | Switch mode (`default` / `auto` / `plan`) |
+| `/think <level>` | Set reasoning effort: `low` / `medium` / `high` / `off` (o-series / Claude 4) |
 | `/memory list\|delete` | Manage memories |
 | `/skills` | List skills |
 | `/<skill-name>` | Run a skill |

@@ -65,6 +65,9 @@ class OpenAIProvider:
         if api_tools:
             request_kwargs["tools"] = api_tools
 
+        if "reasoning_effort" in kwargs:
+            request_kwargs["reasoning_effort"] = kwargs["reasoning_effort"]
+
         MAX_RETRIES = 3
         RETRY_DELAYS = [1, 2, 5]
 

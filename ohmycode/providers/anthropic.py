@@ -125,6 +125,22 @@ class AnthropicProvider:
                 for t in tools
             ]
 
+        if "reasoning_effort" in kwargs:
+            effort = kwargs["reasoning_effort"]
+            # Claude 4 models use adaptive thinking; older models use manual extended thinking
+            _adaptive_markers = ("claude-opus-4", "claude-sonnet-4", "claude-haiku-4")
+            if any(m in model for m in _adaptive_markers):
+                request_kwargs["thinking"] = {"type": "adaptive", "effort": effort}
+            else:
+                budget_map = {"low": 1024, "medium": 8000, "high": 32000}
+                request_kwargs["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": budget_map.get(effort, 8000),
+                }
+            # thinking requires a generous max_tokens budget
+            if request_kwargs.get("max_tokens", 0) < 16000:
+                request_kwargs["max_tokens"] = 16000
+
         finish_reason = "stop"
         prompt_tokens = 0
         completion_tokens = 0
