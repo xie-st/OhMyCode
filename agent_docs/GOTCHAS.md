@@ -47,7 +47,7 @@ Rich output between `prompt_toolkit` prompts moves the terminal cursor without u
 
 - Fix: wrap prints in `prompt_toolkit.patch_stdout.patch_stdout()` (`_repl_print` in `cli.py`).
 
-## 12. Ctrl+C during streaming cannot be caught with `except KeyboardInterrupt` on Windows
+## 11. Ctrl+C during streaming cannot be caught with `except KeyboardInterrupt` on Windows
 
 On Windows (ProactorEventLoop), pressing Ctrl+C while awaiting a network call causes asyncio to cancel the underlying Future, raising `asyncio.CancelledError` from deep inside the httpx/anyio stack. This exception propagates up through all user coroutines and is caught by `asyncio.run()`, which re-raises it as `KeyboardInterrupt` **outside** the user coroutine stack — any `except KeyboardInterrupt` in `render_stream()` or `run_turn()` never fires.
 
@@ -55,7 +55,13 @@ Fix: register `signal.signal(SIGINT, ...)` before `asyncio.run()` to intercept t
 
 Side-effect: any `AssistantMessage` with `tool_calls` that was written to history before the interrupt must have corresponding `ToolResultMessage` entries, or the next API call returns 400. `run_turn()` fills in placeholder `ToolResultMessage("Cancelled by user.")` for every unanswered tool call.
 
-## 11. Anthropic thinking: adaptive vs manual, and max_tokens
+## 12. `threading.Event.wait()` with no timeout blocks the executor thread forever
+
+`asyncio.to_thread(cancel_event.wait)` starts a thread that blocks on `cancel_event.wait()` indefinitely. Cancelling the returned asyncio Task (via `task.cancel()`) only cancels the Python-level Future wrapper — it cannot interrupt the underlying thread, which keeps blocking. When `asyncio.run()` closes the event loop, it waits up to 300 seconds for all executor threads to finish before giving up, causing a visible hang on exit.
+
+Fix: replace the bare `cancel_event.wait` with a polling wrapper that loops on `cancel_event.wait(timeout=0.1)` and exits when a separate `stop_polling` event is set. Set `stop_polling` on both exit paths (cancel fired / render finished) so the thread exits within ~100 ms.
+
+## 13. Anthropic thinking: adaptive vs manual, and max_tokens
 
 When `reasoning_effort` is set, the Anthropic provider must choose between two API modes:
 - **Claude 4 models** (`claude-opus-4`, `claude-sonnet-4`, `claude-haiku-4`): use `thinking: {type: "adaptive", effort: "..."}`. Sending `type: "enabled"` on these models returns a 400 error.
@@ -63,7 +69,7 @@ When `reasoning_effort` is set, the Anthropic provider must choose between two A
 
 Also, enabling thinking requires `max_tokens` to be large enough (≥ 16000); the default 4096 causes an API error.
 
-## 12. ThinkingChunk event passthrough requires explicit handling in loop.py
+## 14. ThinkingChunk event passthrough requires explicit handling in loop.py
 
 `run_turn()` uses explicit `isinstance` branches to decide what to do with each provider event. Unknown event types are **silently dropped** — they do not pass through automatically. When adding a new event type (e.g. `ThinkingChunk`), you must add a corresponding `elif isinstance(event, ThinkingChunk): yield event` branch in `run_turn()`, otherwise it never reaches the CLI.
 

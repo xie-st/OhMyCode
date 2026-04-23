@@ -398,107 +398,109 @@ async def render_stream(conv: ConversationLoop) -> str:
     spinner_task = asyncio.create_task(_spinner())
     box = ThinkingBox()
 
-    async for event in conv.run_turn():
-        # Stop spinner when first real event arrives
-        if thinking:
-            thinking = False
-            if spinner_task and not spinner_task.done():
-                spinner_task.cancel()
-                try:
-                    await spinner_task
-                except asyncio.CancelledError:
-                    pass
-            # When thinking mode is on, the box will render below the spinner line.
-            # Advance to a fresh line so box top-border starts cleanly.
-            if conv.think:
-                sys.stdout.write("\n")
-                sys.stdout.flush()
+    try:
+        async for event in conv.run_turn():
+            # Stop spinner when first real event arrives
+            if thinking:
+                thinking = False
+                if spinner_task and not spinner_task.done():
+                    spinner_task.cancel()
+                    try:
+                        await spinner_task
+                    except asyncio.CancelledError:
+                        pass
+                if conv.think:
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
 
-        if isinstance(event, ThinkingChunk):
-            if conv.think:
-                box.push(event.text)
-            continue
+            if isinstance(event, ThinkingChunk):
+                if conv.think:
+                    box.push(event.text)
+                continue
 
-        if isinstance(event, TextChunk):
-            if box.visible:
-                box.clear()
-            # Stream print with indent
-            text = event.text
-            if not text_printed:
-                # After tool calls: newline + bullet marker
-                if tool_count > 0:
-                    console.print(f"\n  [bold {ACCENT}]●[/] ", end="", highlight=False)
+            if isinstance(event, TextChunk):
+                if box.visible:
+                    box.clear()
+                # Stream print with indent
+                text = event.text
+                if not text_printed:
+                    # After tool calls: newline + bullet marker
+                    if tool_count > 0:
+                        console.print(f"\n  [bold {ACCENT}]●[/] ", end="", highlight=False)
+                    else:
+                        console.print("  ", end="", highlight=False)
+                # Add 4-space indent after each newline
+                text = text.replace("\n", "\n    ")
+                console.print(text, end="", highlight=False)
+                text_printed = True
+
+            elif isinstance(event, ToolCallStart):
+                if box.visible:
+                    box.clear()
+                if text_printed:
+                    console.print()  # Newline to separate from text
+                    text_printed = False
+
+                # Show tool call in a compact format
+                tool_display = event.tool_name
+                params_str = json.dumps(event.params, ensure_ascii=False)
+                if len(params_str) > 100:
+                    params_str = params_str[:97] + "..."
+                console.print(
+                    f"\n    [bold {ACCENT}]▸[/] [bold]{escape(tool_display)}[/]  [dim]{escape(params_str)}[/]",
+                    highlight=False,
+                )
+                tool_count += 1
+
+            elif isinstance(event, ToolCallResult):
+                raw = event.result
+                max_lines = 10
+                lines = raw.splitlines()
+                # Indent each line by 4 spaces; escape so tool output cannot break Rich markup
+                if len(lines) > max_lines:
+                    indented = "\n".join("    " + l for l in lines[:max_lines])
+                    output = escape(indented) + f"\n    [dim]... ({len(lines)} lines total)[/dim]"
                 else:
-                    console.print("  ", end="", highlight=False)
-            # Add 4-space indent after each newline
-            text = text.replace("\n", "\n    ")
-            console.print(text, end="", highlight=False)
-            text_printed = True
+                    body = raw
+                    if len(body) > 500:
+                        body = body[:497] + "..."
+                    body = "\n".join("    " + l for l in body.splitlines())
+                    output = escape(body)
 
-        elif isinstance(event, ToolCallStart):
-            if box.visible:
-                box.clear()
-            if text_printed:
-                console.print()  # Newline to separate from text
-                text_printed = False
+                if event.is_error:
+                    console.print(f"    [red]✗[/] [red]{output}[/]", highlight=False)
+                else:
+                    console.print(f"    [green]✓[/]\n[dim]{output}[/]", highlight=False)
 
-            # Show tool call in a compact format
-            tool_display = event.tool_name
-            params_str = json.dumps(event.params, ensure_ascii=False)
-            if len(params_str) > 100:
-                params_str = params_str[:97] + "..."
-            console.print(
-                f"\n    [bold {ACCENT}]▸[/] [bold]{escape(tool_display)}[/]  [dim]{escape(params_str)}[/]",
-                highlight=False,
-            )
-            tool_count += 1
+            elif isinstance(event, TurnComplete):
+                finish_reason = event.finish_reason
+                if box.visible:
+                    box.clear()
+                if text_printed:
+                    console.print()  # Final newline
+                    text_printed = False
+                u = event.usage
+                elapsed = time.monotonic() - t_start
+                # Stats line: tool count · tokens · elapsed
+                stats_parts = []
+                if tool_count > 0:
+                    stats_parts.append(f"{tool_count} tool use{'s' if tool_count > 1 else ''}")
+                if u.total_tokens > 0:
+                    stats_parts.append(f"{u.total_tokens:,} tokens")
+                stats_parts.append(f"{elapsed:.1f}s")
+                console.print(f"\n  [dim]{' · '.join(stats_parts)}[/dim]")
+                tool_count = 0
 
-        elif isinstance(event, ToolCallResult):
-            raw = event.result
-            max_lines = 10
-            lines = raw.splitlines()
-            # Indent each line by 4 spaces; escape so tool output cannot break Rich markup
-            if len(lines) > max_lines:
-                indented = "\n".join("    " + l for l in lines[:max_lines])
-                output = escape(indented) + f"\n    [dim]... ({len(lines)} lines total)[/dim]"
-            else:
-                body = raw
-                if len(body) > 500:
-                    body = body[:497] + "..."
-                body = "\n".join("    " + l for l in body.splitlines())
-                output = escape(body)
-
-            if event.is_error:
-                console.print(f"    [red]✗[/] [red]{output}[/]", highlight=False)
-            else:
-                console.print(f"    [green]✓[/]\n[dim]{output}[/]", highlight=False)
-
-        elif isinstance(event, TurnComplete):
-            finish_reason = event.finish_reason
-            if box.visible:
-                box.clear()
-            if text_printed:
-                console.print()  # Final newline
-                text_printed = False
-            u = event.usage
-            elapsed = time.monotonic() - t_start
-            # Stats line: tool count · tokens · elapsed
-            stats_parts = []
-            if tool_count > 0:
-                stats_parts.append(f"{tool_count} tool use{'s' if tool_count > 1 else ''}")
-            if u.total_tokens > 0:
-                stats_parts.append(f"{u.total_tokens:,} tokens")
-            stats_parts.append(f"{elapsed:.1f}s")
-            console.print(f"\n  [dim]{' · '.join(stats_parts)}[/dim]")
-            tool_count = 0
-
-    # Ensure spinner is cleaned up if loop exits early (e.g. CancelledError)
-    if spinner_task and not spinner_task.done():
-        spinner_task.cancel()
-        try:
-            await spinner_task
-        except asyncio.CancelledError:
-            pass
+    finally:
+        # Always restore terminal state regardless of how the coroutine exits.
+        if box.visible:
+            box.clear()
+        if spinner_task and not spinner_task.done():
+            spinner_task.cancel()
+            try:
+                await spinner_task
+            except asyncio.CancelledError:
+                pass
 
     return finish_reason
 
@@ -796,8 +798,18 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
         render_task = asyncio.create_task(render_stream(conv))
         if cancel_event is None:
             return await render_task
+        # Use a short-polling wrapper so the thread can exit when cancelled.
+        # threading.Event.wait() with no timeout blocks forever and cannot be
+        # interrupted by asyncio cancellation, causing a 300 s executor join on exit.
+        stop_polling = threading.Event()
+
+        def _poll_cancel():
+            while not stop_polling.is_set():
+                if cancel_event.wait(timeout=0.1):
+                    return
+
         cancel_fut: asyncio.Future = asyncio.ensure_future(
-            asyncio.to_thread(cancel_event.wait)
+            asyncio.to_thread(_poll_cancel)
         )
         done, _ = await asyncio.wait(
             {render_task, cancel_fut},
@@ -805,6 +817,7 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
         )
         if cancel_fut in done:
             cancel_event.clear()
+            stop_polling.set()
             render_task.cancel()
             try:
                 await render_task
@@ -812,6 +825,7 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
                 pass
             return "cancelled"
         else:
+            stop_polling.set()
             cancel_fut.cancel()
             try:
                 await cancel_fut
