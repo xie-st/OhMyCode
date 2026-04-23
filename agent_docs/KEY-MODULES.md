@@ -100,7 +100,7 @@ get_provider("name", api_key=...) -> Provider
 
 `ConversationLoop.get_status_snapshot()` exposes current REPL/session status for `/status`, including message count, approximate used tokens, effective context window, usage percent, and the compression stage (`ok` | `snip` | `micro_compact` | `collapse` | `auto_compact`).
 
-`ConversationLoop.think: str | None` — when set to `"low"`, `"medium"`, or `"high"`, `run_turn()` forwards it as `reasoning_effort` in `**kwargs` to `provider.stream()`. Providers translate this to their native API parameter (OpenAI: `reasoning_effort`; Anthropic: `thinking` with adaptive or manual extended thinking depending on model generation).
+`ConversationLoop.think: str | None` — when set to `"low"`, `"medium"`, or `"high"`, `run_turn()` forwards it as `reasoning_effort` in `**kwargs` to `provider.stream()`. Providers translate this to their native API parameter (OpenAI: `reasoning_effort`; Anthropic: `thinking` with adaptive or manual extended thinking depending on model generation). The Anthropic provider yields `ThinkingChunk` events for each `thinking_delta` received; `run_turn()` passes them through to the CLI, which renders them in a live scrolling panel (hidden once the text response begins).
 
 **Cancellation handling in `run_turn()`** — `run_turn()` catches `asyncio.CancelledError` at two points:
 1. Inside the `provider.stream()` loop: saves partial `AssistantMessage(content=collected_text, tool_calls=[])` to history, yields `TurnComplete(finish_reason="cancelled")`, then re-raises.
@@ -111,7 +111,7 @@ get_provider("name", api_key=...) -> Provider
 ## core/messages.py
 
 Message types: `UserMessage`, `AssistantMessage`, `ToolResultMessage`, `SystemMessage`  
-Event types: `TextChunk`, `ToolCallStart`, `ToolCallResult`, `TurnComplete`, `TokenUsage`
+Event types: `TextChunk`, `ThinkingChunk`, `ToolCallStart`, `ToolCallResult`, `TurnComplete`, `TokenUsage`
 
 All messages implement `to_api_dict()` for the API payload.
 

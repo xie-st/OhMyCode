@@ -10,6 +10,7 @@ from anthropic import AsyncAnthropic
 from ohmycode.core.messages import (
     StreamEvent,
     TextChunk,
+    ThinkingChunk,
     TokenUsage,
     ToolCallStart,
     TurnComplete,
@@ -168,6 +169,8 @@ class AnthropicProvider:
                     delta = event.delta
                     if delta.type == "text_delta":
                         yield TextChunk(text=delta.text)
+                    elif delta.type == "thinking_delta":
+                        yield ThinkingChunk(text=delta.thinking)
                     elif delta.type == "input_json_delta":
                         idx = event.index
                         if idx in tool_calls_acc:

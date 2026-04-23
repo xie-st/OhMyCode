@@ -12,6 +12,7 @@ from ohmycode.core.messages import (
     ToolResultMessage,
     ToolUseBlock,
     TextChunk,
+    ThinkingChunk,
     ToolCallStart,
     ToolCallResult,
     TurnComplete,
@@ -193,6 +194,9 @@ class ConversationLoop:
 
                     if isinstance(event, TextChunk):
                         collected_text += event.text
+                        yield event
+
+                    elif isinstance(event, ThinkingChunk):
                         yield event
 
                     elif isinstance(event, ToolCallStart):

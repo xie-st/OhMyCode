@@ -62,3 +62,9 @@ When `reasoning_effort` is set, the Anthropic provider must choose between two A
 - **Older models** (claude-3-7-sonnet etc.): use `thinking: {type: "enabled", budget_tokens: N}`.
 
 Also, enabling thinking requires `max_tokens` to be large enough (≥ 16000); the default 4096 causes an API error.
+
+## 12. ThinkingChunk event passthrough requires explicit handling in loop.py
+
+`run_turn()` uses explicit `isinstance` branches to decide what to do with each provider event. Unknown event types are **silently dropped** — they do not pass through automatically. When adding a new event type (e.g. `ThinkingChunk`), you must add a corresponding `elif isinstance(event, ThinkingChunk): yield event` branch in `run_turn()`, otherwise it never reaches the CLI.
+
+The `thinking_delta` content block delta from the Anthropic SDK uses `delta.thinking` (not `delta.text`) as the attribute name. The block type is identified via `delta.type == "thinking_delta"` in the `content_block_delta` event handler.

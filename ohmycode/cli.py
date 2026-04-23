@@ -28,7 +28,7 @@ from rich.text import Text
 
 from ohmycode.config.config import load_config, OhMyCodeConfig
 from ohmycode.core.loop import ConversationLoop
-from ohmycode.core.messages import TextChunk, ToolCallStart, ToolCallResult, TurnComplete
+from ohmycode.core.messages import TextChunk, ThinkingChunk, ToolCallStart, ToolCallResult, TurnComplete
 from ohmycode.core.file_ref import expand_file_refs, get_at_completions
 from ohmycode.skills.loader import scan_skills, load_skill, SkillInfo
 
@@ -287,6 +287,83 @@ async def confirm_tool_call(tool_name: str, params: dict) -> str:
 
 # ── Stream rendering ──────────────────────────────────────────────────────────
 
+_BOX_CONTENT_WIDTH = 60   # characters per line of thinking content
+_BOX_LINES = 3            # visible content rows
+_BOX_THROTTLE = 0.05      # minimum seconds between redraws
+
+
+class ThinkingBox:
+    """Fixed-height scrolling box for streaming thinking content.
+
+    All output goes through sys.stdout directly (no Rich) so that Rich's
+    internal state stays clean for the text response that follows.
+    """
+
+    def __init__(self) -> None:
+        self._lines: list[str] = []   # completed lines (max _BOX_LINES)
+        self._current: str = ""       # line being built
+        self.visible: bool = False
+        self._last_draw: float = 0.0
+        self._drawn_height: int = 0   # how many lines were printed last draw
+
+    def push(self, text: str) -> None:
+        import time
+        self._current += text
+        # Split on newlines in the incoming chunk
+        while "\n" in self._current:
+            head, self._current = self._current.split("\n", 1)
+            self._flush_line(head)
+        # Soft-wrap long lines
+        while len(self._current) >= _BOX_CONTENT_WIDTH:
+            self._flush_line(self._current[:_BOX_CONTENT_WIDTH])
+            self._current = self._current[_BOX_CONTENT_WIDTH:]
+        # Throttle redraws
+        now = time.monotonic()
+        if now - self._last_draw >= _BOX_THROTTLE:
+            self._draw()
+            self._last_draw = now
+
+    def _flush_line(self, line: str) -> None:
+        if len(self._lines) >= _BOX_LINES:
+            self._lines = []   # reset: scroll-by-clear
+        self._lines.append(line)
+
+    def _build_frame(self) -> str:
+        display = list(self._lines)
+        if self._current:
+            display = display + [self._current]
+        display = display[-_BOX_LINES:]
+        header = f"  \033[38;2;255;107;157m▌\033[0m \033[2mThinking\033[0m"
+        rows = [header]
+        for i in range(_BOX_LINES):
+            if i < len(display):
+                content = display[i][:_BOX_CONTENT_WIDTH]
+                rows.append(f"  \033[2m│  {content}\033[0m")
+            else:
+                rows.append(f"  \033[2m│\033[0m")
+        return "\n".join(rows)
+
+    def _draw(self) -> None:
+        frame = self._build_frame()
+        line_count = frame.count("\n") + 1
+        if self.visible and self._drawn_height > 0:
+            # Move up and erase everything below so no old characters linger
+            sys.stdout.write(f"\033[{self._drawn_height}A\033[J")
+        sys.stdout.write(frame)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        self.visible = True
+        self._drawn_height = line_count
+
+    def clear(self) -> None:
+        """Erase the box so normal output can follow."""
+        if not self.visible:
+            return
+        # Move up to box top and clear everything below
+        sys.stdout.write(f"\033[{self._drawn_height}A\033[J")
+        sys.stdout.flush()
+        self.visible = False
+        self._drawn_height = 0
 
 async def render_stream(conv: ConversationLoop) -> str:
     """Consume run_turn() event stream, render to terminal, return finish_reason."""
@@ -309,7 +386,7 @@ async def render_stream(conv: ConversationLoop) -> str:
                 elapsed = time.monotonic() - t_start
                 frame = SPINNER_FRAMES[idx % len(SPINNER_FRAMES)]
                 # \r to start of line, \033[K clear to end of line
-                sys.stdout.write(f"\r  \033[2m{frame} Thinking... {elapsed:.0f}s\033[0m\033[K")
+                sys.stdout.write(f"\r  \033[2m{frame} Waiting... {elapsed:.0f}s\033[0m\033[K")
                 sys.stdout.flush()
                 idx += 1
                 await asyncio.sleep(0.1)
@@ -319,6 +396,7 @@ async def render_stream(conv: ConversationLoop) -> str:
             sys.stdout.flush()
 
     spinner_task = asyncio.create_task(_spinner())
+    box = ThinkingBox()
 
     async for event in conv.run_turn():
         # Stop spinner when first real event arrives
@@ -330,8 +408,20 @@ async def render_stream(conv: ConversationLoop) -> str:
                     await spinner_task
                 except asyncio.CancelledError:
                     pass
+            # When thinking mode is on, the box will render below the spinner line.
+            # Advance to a fresh line so box top-border starts cleanly.
+            if conv.think:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+
+        if isinstance(event, ThinkingChunk):
+            if conv.think:
+                box.push(event.text)
+            continue
 
         if isinstance(event, TextChunk):
+            if box.visible:
+                box.clear()
             # Stream print with indent
             text = event.text
             if not text_printed:
@@ -346,6 +436,8 @@ async def render_stream(conv: ConversationLoop) -> str:
             text_printed = True
 
         elif isinstance(event, ToolCallStart):
+            if box.visible:
+                box.clear()
             if text_printed:
                 console.print()  # Newline to separate from text
                 text_printed = False
@@ -383,6 +475,8 @@ async def render_stream(conv: ConversationLoop) -> str:
 
         elif isinstance(event, TurnComplete):
             finish_reason = event.finish_reason
+            if box.visible:
+                box.clear()
             if text_printed:
                 console.print()  # Final newline
                 text_printed = False

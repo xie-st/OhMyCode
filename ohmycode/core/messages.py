@@ -118,6 +118,13 @@ class TextChunk:
 
 
 @dataclass
+class ThinkingChunk:
+    """A fragment of extended thinking content from the model."""
+
+    text: str
+
+
+@dataclass
 class ToolCallStart:
     """Notification: a tool call was parsed from the stream."""
 
@@ -151,4 +158,4 @@ class TurnComplete:
 
 
 # Union of all events the loop may yield
-StreamEvent = Union[TextChunk, ToolCallStart, ToolCallResult, TurnComplete]
+StreamEvent = Union[TextChunk, ThinkingChunk, ToolCallStart, ToolCallResult, TurnComplete]
