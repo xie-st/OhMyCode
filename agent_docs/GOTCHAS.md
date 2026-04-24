@@ -75,6 +75,10 @@ Also, enabling thinking requires `max_tokens` to be large enough (≥ 16000); th
 
 Fix: pass `config=self.config` when building the root `ToolContext` in `ConversationLoop.initialize()`. `AgentTool.execute()` then does `copy.copy(ctx.config)` and overrides only `mode`, preserving all credentials.
 
+## 16. Multiple concurrent SubAgentBoxes clobber each other's terminal output
+
+`AgentTool.concurrent_safe = False` keeps sub-agents serial. If it were set to `True`, two `SubAgentBox` instances running concurrently would both issue `\033[{N}A\033[J` cursor-up/erase sequences against the same `sys.stdout`, corrupting each other's display. Fix before enabling parallelism: gate all `_draw()` / `clear()` calls behind a shared `asyncio.Lock`, or render both boxes as a single combined frame.
+
 ## 14. ThinkingChunk event passthrough requires explicit handling in loop.py
 
 `run_turn()` uses explicit `isinstance` branches to decide what to do with each provider event. Unknown event types are **silently dropped** — they do not pass through automatically. When adding a new event type (e.g. `ThinkingChunk`), you must add a corresponding `elif isinstance(event, ThinkingChunk): yield event` branch in `run_turn()`, otherwise it never reaches the CLI.

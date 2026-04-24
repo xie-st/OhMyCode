@@ -7,7 +7,7 @@ OhMyCode is a minimal AI coding-assistant CLI that reproduces Claude Code's core
 ## Module dependency graph
 
 ```
-cli.py → _cli/output.py        [ThinkingBox, render_stream]
+cli.py → _cli/output.py        [ScrollingBox, ThinkingBox, MemoryBox, SubAgentBox, render_stream]
        → _cli/prompt_session.py [SlashCompleter, build_prompt_session]
        → _cli/repl_commands.py  [handle_slash_command and per-command fns]
        → core/loop.py → providers/base.py → providers/openai.py
@@ -54,7 +54,7 @@ User input → cli.py
 | Module | File | Role |
 |--------|------|------|
 | CLI entry | `cli.py` | Argument parsing, `run_single`, `run_repl` orchestration, `run_vchange`, `confirm_tool_call` |
-| Stream rendering | `_cli/output.py` | `ThinkingBox` / `MemoryBox` scrolling panels, `render_stream` async consumer, spinner |
+| Stream rendering | `_cli/output.py` | `ScrollingBox` base + `ThinkingBox` / `MemoryBox` / `SubAgentBox` panels, `render_stream` async consumer, spinner |
 | Prompt session | `_cli/prompt_session.py` | `SlashCompleter`, prompt_toolkit session factory (Enter selects, not submits) |
 | REPL commands | `_cli/repl_commands.py` | `/exit` `/clear` `/new` `/mode` `/status` `/memory` `/think` `/skills` + skill dispatch |
 | File reference | `core/file_ref.py` | `@path` expansion and Tab completion candidates |

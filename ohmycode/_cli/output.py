@@ -1,4 +1,4 @@
-"""Stream rendering: ThinkingBox and render_stream."""
+"""Stream rendering: ScrollingBox family and render_stream."""
 
 from __future__ import annotations
 
@@ -26,14 +26,23 @@ ACCENT = "#ff6b9d"
 _BOX_CONTENT_WIDTH = 60
 _BOX_LINES = 3
 _BOX_THROTTLE = 0.05
+_ACCENT_ESC = "\033[38;2;255;107;157m"
 
 
-class ThinkingBox:
-    """Fixed-height scrolling box for streaming thinking content.
+def _is_interactive() -> bool:
+    """Return True only when stdout is a real terminal that supports ANSI."""
+    return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+
+class ScrollingBox:
+    """Fixed-height scrolling box for live terminal feedback.
 
     All output goes through sys.stdout directly (no Rich) so that Rich's
     internal state stays clean for the text response that follows.
+    Subclasses set the class-level ``_header`` string.
     """
+
+    _header: str = ""
 
     def __init__(self) -> None:
         self._lines: list[str] = []
@@ -65,8 +74,7 @@ class ThinkingBox:
         if self._current:
             display = display + [self._current]
         display = display[-_BOX_LINES:]
-        header = f"  \033[38;2;255;107;157m▌\033[0m \033[2mThinking\033[0m"
-        rows = [header]
+        rows = [self._header]
         for i in range(_BOX_LINES):
             if i < len(display):
                 content = display[i][:_BOX_CONTENT_WIDTH]
@@ -97,73 +105,46 @@ class ThinkingBox:
         self._drawn_height = 0
 
 
-class MemoryBox:
-    """Fixed-height scrolling box for streaming memory extraction output.
+class ThinkingBox(ScrollingBox):
+    """Scrolling box for streaming extended-thinking output."""
 
-    Identical mechanics to ThinkingBox but with an 'Analyzing' header,
-    used during /exit to show live LLM output while extracting memories.
-    """
+    _header = f"  {_ACCENT_ESC}▌\033[0m \033[2mThinking\033[0m"
+
+
+class MemoryBox(ScrollingBox):
+    """Scrolling box used during /exit memory extraction."""
+
+    _header = f"  {_ACCENT_ESC}▌\033[0m \033[2mAnalyzing\033[0m"
+
+
+class SubAgentBox(ScrollingBox):
+    """Scrolling box showing tool calls made inside a spawned sub-agent."""
+
+    _header = f"\n  {_ACCENT_ESC}▌\033[0m \033[2mSub-agent\033[0m"
 
     def __init__(self) -> None:
-        self._lines: list[str] = []
-        self._current: str = ""
-        self.visible: bool = False
-        self._last_draw: float = 0.0
-        self._drawn_height: int = 0
+        super().__init__()
+        self._tool_count = 0
+        self._start = time.monotonic()
 
-    def push(self, text: str) -> None:
-        self._current += text
-        while "\n" in self._current:
-            head, self._current = self._current.split("\n", 1)
-            self._flush_line(head)
-        while len(self._current) >= _BOX_CONTENT_WIDTH:
-            self._flush_line(self._current[:_BOX_CONTENT_WIDTH])
-            self._current = self._current[_BOX_CONTENT_WIDTH:]
+    def push_tool(self, tool_name: str) -> None:
+        """Record a tool-call event and redraw the box."""
+        self._tool_count += 1
+        self._flush_line(f"→ {tool_name}")
         now = time.monotonic()
         if now - self._last_draw >= _BOX_THROTTLE:
             self._draw()
             self._last_draw = now
 
-    def _flush_line(self, line: str) -> None:
-        if len(self._lines) >= _BOX_LINES:
-            self._lines = []
-        self._lines.append(line)
-
-    def _build_frame(self) -> str:
-        display = list(self._lines)
-        if self._current:
-            display = display + [self._current]
-        display = display[-_BOX_LINES:]
-        header = f"  \033[38;2;255;107;157m▌\033[0m \033[2mAnalyzing\033[0m"
-        rows = [header]
-        for i in range(_BOX_LINES):
-            if i < len(display):
-                content = display[i][:_BOX_CONTENT_WIDTH]
-                rows.append(f"  \033[2m│  {content}\033[0m")
-            else:
-                rows.append(f"  \033[2m│\033[0m")
-        return "\n".join(rows)
-
-    def _draw(self) -> None:
-        frame = self._build_frame()
-        line_count = frame.count("\n") + 1
-        if self.visible and self._drawn_height > 0:
-            sys.stdout.write(f"\033[{self._drawn_height}A\033[J")
-        sys.stdout.write(frame)
-        sys.stdout.write("\n")
-        sys.stdout.flush()
-        self.visible = True
-        self._drawn_height = line_count
-
-    def clear(self) -> None:
-        """Erase the box so normal output can follow."""
-        self._draw()  # flush any pending content so _drawn_height is accurate
-        if not self.visible:
-            return
-        sys.stdout.write(f"\033[{self._drawn_height}A\033[J")
-        sys.stdout.flush()
-        self.visible = False
-        self._drawn_height = 0
+    def finish(self) -> None:
+        """Show a completion line, pause 0.6s, then clear."""
+        elapsed = time.monotonic() - self._start
+        n = self._tool_count
+        label = f"tool{'s' if n != 1 else ''}"
+        self._flush_line(f"✓ done ({n} {label}, {elapsed:.1f}s)")
+        self._draw()
+        time.sleep(0.6)
+        self.clear()
 
 
 async def render_stream(conv: ConversationLoop) -> str:
