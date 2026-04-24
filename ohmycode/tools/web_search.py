@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import os
 import re
 
 import httpx
 
 from ohmycode.tools.base import Tool, ToolContext, ToolResult, register_tool
+
+
+def _detect_proxy() -> str | None:
+    """Return a proxy URL from env vars, or None. OHMYCODE_PROXY takes priority."""
+    for var in ("OHMYCODE_PROXY", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        value = os.environ.get(var)
+        if value:
+            return value
+    return None
 
 
 @register_tool
@@ -28,12 +38,17 @@ class WebSearchTool(Tool):
     async def execute(self, params: dict, ctx: ToolContext) -> ToolResult:
         query = params["query"]
 
+        client_kwargs: dict = {
+            "timeout": 30,
+            "follow_redirects": True,
+            "headers": {"User-Agent": "Mozilla/5.0 (compatible; OhMyCode/0.1)"},
+        }
+        proxy = _detect_proxy()
+        if proxy:
+            client_kwargs["proxy"] = proxy
+
         try:
-            async with httpx.AsyncClient(
-                timeout=30,
-                follow_redirects=True,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; OhMyCode/0.1)"},
-            ) as client:
+            async with httpx.AsyncClient(**client_kwargs) as client:
                 response = await client.get(
                     "https://html.duckduckgo.com/html/",
                     params={"q": query},
@@ -53,6 +68,15 @@ class WebSearchTool(Tool):
 
             return ToolResult(output=formatted, is_error=False)
 
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            hint = (
+                "Hint: Cannot reach DuckDuckGo. If you are behind a GFW / restricted network, "
+                "set a proxy and retry, e.g.:\n"
+                "    export OHMYCODE_PROXY=http://127.0.0.1:7890"
+            )
+            return ToolResult(output=f"Connection failed: {exc}\n{hint}", is_error=True)
+        except httpx.ReadTimeout as exc:
+            return ToolResult(output=f"Read timeout (30s exceeded): {exc}", is_error=True)
         except httpx.RequestError as exc:
             return ToolResult(output=f"Network error: {exc}", is_error=True)
         except Exception as exc:

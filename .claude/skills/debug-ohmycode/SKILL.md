@@ -97,6 +97,16 @@ print(result.output, result.is_error)
 
 4. Check `concurrent_safe` flag: if a tool has side effects but is marked `concurrent_safe=True`, it may have race conditions when called in parallel.
 
+### `web_search` — "Connection failed" / unreachable
+
+`web_search` queries `https://html.duckduckgo.com/html/`, which is blocked on some networks (notably inside the GFW). If you see `Connection failed: ...` or `Network error:`, set a proxy before launching `ohmycode`:
+
+- **bash / zsh**: `export OHMYCODE_PROXY=http://127.0.0.1:7890`
+- **PowerShell**: `$env:OHMYCODE_PROXY = "http://127.0.0.1:7890"`
+- **cmd.exe**: `set OHMYCODE_PROXY=http://127.0.0.1:7890`
+
+Precedence: `OHMYCODE_PROXY` → `HTTPS_PROXY` → `HTTP_PROXY`. Replace the port with whatever your proxy client (Clash 7890, V2rayN 10809, Shadowsocks 1080, ...) exposes. System-wide proxy toggles that only patch the Windows registry are **not** picked up — the env var must be set in the shell that launches `ohmycode`.
+
 ## Category 4: Context / Compression Issues
 
 **Symptoms:** "Circuit breaker open", conversations getting cut off, AI forgetting context

@@ -128,7 +128,7 @@ CLI overrides: `--provider`, `--model`, `--mode`, `--api-key`, `--base-url`.
 | `glob` | Find files by pattern |
 | `grep` | Regex search across files |
 | `web_fetch` | Fetch URL → text |
-| `web_search` | DuckDuckGo search |
+| `web_search` | DuckDuckGo search (set `OHMYCODE_PROXY` if DuckDuckGo is blocked on your network) |
 | `agent` | Sub-agent (max depth 2) |
 
 ## Extending (or: Let It Extend Itself)
