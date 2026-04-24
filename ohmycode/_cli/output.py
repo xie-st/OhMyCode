@@ -88,6 +88,76 @@ class ThinkingBox:
 
     def clear(self) -> None:
         """Erase the box so normal output can follow."""
+        self._draw()  # flush any pending content so _drawn_height is accurate
+        if not self.visible:
+            return
+        sys.stdout.write(f"\033[{self._drawn_height}A\033[J")
+        sys.stdout.flush()
+        self.visible = False
+        self._drawn_height = 0
+
+
+class MemoryBox:
+    """Fixed-height scrolling box for streaming memory extraction output.
+
+    Identical mechanics to ThinkingBox but with an 'Analyzing' header,
+    used during /exit to show live LLM output while extracting memories.
+    """
+
+    def __init__(self) -> None:
+        self._lines: list[str] = []
+        self._current: str = ""
+        self.visible: bool = False
+        self._last_draw: float = 0.0
+        self._drawn_height: int = 0
+
+    def push(self, text: str) -> None:
+        self._current += text
+        while "\n" in self._current:
+            head, self._current = self._current.split("\n", 1)
+            self._flush_line(head)
+        while len(self._current) >= _BOX_CONTENT_WIDTH:
+            self._flush_line(self._current[:_BOX_CONTENT_WIDTH])
+            self._current = self._current[_BOX_CONTENT_WIDTH:]
+        now = time.monotonic()
+        if now - self._last_draw >= _BOX_THROTTLE:
+            self._draw()
+            self._last_draw = now
+
+    def _flush_line(self, line: str) -> None:
+        if len(self._lines) >= _BOX_LINES:
+            self._lines = []
+        self._lines.append(line)
+
+    def _build_frame(self) -> str:
+        display = list(self._lines)
+        if self._current:
+            display = display + [self._current]
+        display = display[-_BOX_LINES:]
+        header = f"  \033[38;2;255;107;157m▌\033[0m \033[2mAnalyzing\033[0m"
+        rows = [header]
+        for i in range(_BOX_LINES):
+            if i < len(display):
+                content = display[i][:_BOX_CONTENT_WIDTH]
+                rows.append(f"  \033[2m│  {content}\033[0m")
+            else:
+                rows.append(f"  \033[2m│\033[0m")
+        return "\n".join(rows)
+
+    def _draw(self) -> None:
+        frame = self._build_frame()
+        line_count = frame.count("\n") + 1
+        if self.visible and self._drawn_height > 0:
+            sys.stdout.write(f"\033[{self._drawn_height}A\033[J")
+        sys.stdout.write(frame)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        self.visible = True
+        self._drawn_height = line_count
+
+    def clear(self) -> None:
+        """Erase the box so normal output can follow."""
+        self._draw()  # flush any pending content so _drawn_height is accurate
         if not self.visible:
             return
         sys.stdout.write(f"\033[{self._drawn_height}A\033[J")

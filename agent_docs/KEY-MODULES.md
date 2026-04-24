@@ -92,6 +92,9 @@ get_provider("name", api_key=...) -> Provider
 
 # Collect full text response from a provider (used by memory extraction and context compression)
 await stream_to_text(provider, messages, model, system="") -> str
+
+# Like stream_to_text but also pushes each TextChunk to box.push() for live display
+await stream_to_box(provider, messages, model, system="", box=None) -> str
 ```
 
 `Provider.stream()` must yield events in this order:

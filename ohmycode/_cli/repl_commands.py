@@ -11,10 +11,16 @@ from ohmycode.memory.memory import (
     BTreeMemoryStore,
     get_project_memory_dir,
     VALID_CATEGORIES,
-    extract_memories_from_conversation,
+    extract_memories_with_box,
 )
 from ohmycode.skills.loader import load_skill, SkillInfo
-from ohmycode.storage.conversation import save_conversation
+from ohmycode.storage.conversation import (
+    save_conversation,
+    list_unextracted_conversations,
+    mark_conversation_memories_extracted,
+    load_conversation,
+)
+from ohmycode._cli.output import MemoryBox
 
 # Re-imported here so callers don't need a separate import for confirm_tool_call
 from ohmycode._cli.output import ACCENT  # noqa: F401 (used by callers via this module)
@@ -29,15 +35,16 @@ async def handle_slash_command(
     config_overrides: dict[str, Any],
     skills: dict[str, SkillInfo],
     resumed_filename: str | None,
-    repl_print: Callable,
-    repl_print_plain: Callable,
-    stream_fn: Callable,
-    confirm_tool_call: Callable,
-    get_current_mode: Callable[[], str],
-    set_current_mode: Callable[[str], None],
-    set_conv: Callable[[ConversationLoop], None],
-    set_config: Callable[[OhMyCodeConfig], None],
-    set_resumed_filename: Callable[[str | None], None],
+    session_id: str = "",
+    repl_print: Callable = lambda *a, **k: None,
+    repl_print_plain: Callable = lambda *a, **k: None,
+    stream_fn: Callable = lambda *a, **k: None,
+    confirm_tool_call: Callable = lambda *a, **k: None,
+    get_current_mode: Callable[[], str] = lambda: "",
+    set_current_mode: Callable[[str], None] = lambda m: None,
+    set_conv: Callable[[ConversationLoop], None] = lambda c: None,
+    set_config: Callable[[OhMyCodeConfig], None] = lambda c: None,
+    set_resumed_filename: Callable[[str | None], None] = lambda f: None,
 ) -> str | int:
     """Dispatch a slash command. Returns 'continue', 'break', or an int exit code."""
     args = parts[1] if len(parts) > 1 else ""
@@ -48,20 +55,34 @@ async def handle_slash_command(
             save_conversation(
                 conv.messages, config.provider, config.model, config.mode,
                 filename=resumed_filename,
+                session_id=session_id,
+                memories_extracted=False,
             )
             repl_print_plain("Conversation saved.")
-        if conv.messages and conv._provider:
-            try:
-                memories = await extract_memories_from_conversation(
-                    conv.messages, conv._provider, config.model
-                )
-                if memories:
-                    _store = BTreeMemoryStore(get_project_memory_dir(os.getcwd()))
-                    _store.ensure_tree()
+        if conv._provider:
+            pending = list_unextracted_conversations(session_id)
+            if pending:
+                n = len(pending)
+                repl_print_plain(f"  Extracting memories from {n} conversation{'s' if n > 1 else ''}...")
+                _store = BTreeMemoryStore(get_project_memory_dir(os.getcwd()))
+                _store.ensure_tree()
+                for i, filename in enumerate(pending, 1):
+                    result = load_conversation(filename)
+                    if result is None:
+                        mark_conversation_memories_extracted(filename)
+                        continue
+                    msgs, _ = result
+                    box = MemoryBox()
+                    try:
+                        memories = await extract_memories_with_box(msgs, conv._provider, config.model, box)
+                    except Exception:
+                        memories = []
+                    box.clear()
                     for m in memories:
                         _store.save(m["name"], m["type"], m["content"])
-            except Exception:
-                pass
+                    mark_conversation_memories_extracted(filename)
+                    count = len(memories)
+                    repl_print_plain(f"  ✓ Conversation {i} ({count} memor{'y' if count == 1 else 'ies'} saved)")
         return 0
 
     if cmd == "/clear":
@@ -74,7 +95,9 @@ async def handle_slash_command(
         if conv.messages:
             try:
                 saved = save_conversation(
-                    conv.messages, config.provider, config.model, config.mode
+                    conv.messages, config.provider, config.model, config.mode,
+                    session_id=session_id,
+                    memories_extracted=False,
                 )
                 repl_print(f"[dim]Conversation saved: {saved}[/dim]")
             except Exception as e:

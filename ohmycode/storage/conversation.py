@@ -6,6 +6,7 @@ import json
 import os
 import random
 import string
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -98,6 +99,8 @@ def save_conversation(
     model: str = "",
     mode: str = "",
     filename: str | None = None,
+    session_id: str = "",
+    memories_extracted: bool = False,
 ) -> str:
     """Serialize messages to JSON and save to CONVERSATIONS_DIR.
 
@@ -118,11 +121,53 @@ def save_conversation(
             "mode": mode,
             "saved_at": datetime.now().isoformat(),
             "message_count": len(messages),
+            "session_id": session_id,
+            "memories_extracted": memories_extracted,
         },
         "messages": [_msg_to_dict(m) for m in messages],
     }
     filepath.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return filename
+
+
+def mark_conversation_memories_extracted(filename: str) -> None:
+    """Atomically mark a conversation file as having had memories extracted."""
+    filepath = CONVERSATIONS_DIR / filename
+    if not filepath.exists():
+        return
+    try:
+        data = json.loads(filepath.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    data.setdefault("metadata", {})["memories_extracted"] = True
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=CONVERSATIONS_DIR, suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, ensure_ascii=False, indent=2))
+        os.replace(tmp_path, filepath)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+def list_unextracted_conversations(session_id: str = "") -> List[str]:
+    """Return filenames of conversations saved with memories_extracted=False for this session."""
+    _ensure_dir()
+    result = []
+    for f in sorted(CONVERSATIONS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        meta = data.get("metadata", {})
+        if meta.get("memories_extracted") is not False:
+            continue
+        if session_id and meta.get("session_id") != session_id:
+            continue
+        result.append(f.name)
+    return result
 
 
 def load_conversation(

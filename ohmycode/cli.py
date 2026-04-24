@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import threading
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -273,6 +274,9 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
     conv.initialize()
     available_skills = scan_skills()
 
+    # Session ID isolates this process's saved conversations from other concurrent processes
+    session_id = str(uuid.uuid4())[:8]
+
     # Mutable state shared with callbacks
     current_mode = config.mode
     resumed_filename: str | None = None
@@ -449,6 +453,7 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
                 config_overrides=config_overrides,
                 skills=available_skills,
                 resumed_filename=resumed_filename,
+                session_id=session_id,
                 repl_print=_repl_print,
                 repl_print_plain=_repl_print_plain,
                 stream_fn=_stream_with_cancel,

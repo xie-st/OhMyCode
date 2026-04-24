@@ -73,3 +73,15 @@ async def stream_to_text(provider: Any, messages: list, model: str, system: str 
         if isinstance(event, TextChunk):
             collected += event.text
     return collected
+
+
+async def stream_to_box(provider: Any, messages: list, model: str, system: str = "", box: Any = None) -> str:
+    """Like stream_to_text but also pushes each TextChunk to box.push() for live display."""
+    from ohmycode.core.messages import TextChunk
+    collected = ""
+    async for event in provider.stream(messages=messages, tools=[], system=system, model=model):
+        if isinstance(event, TextChunk):
+            collected += event.text
+            if box is not None:
+                box.push(event.text)
+    return collected

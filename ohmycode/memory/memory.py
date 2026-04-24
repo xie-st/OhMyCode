@@ -290,6 +290,30 @@ def parse_extraction_response(raw_text: str) -> List[dict]:
     return results
 
 
+def _build_extraction_request(messages: list):
+    """Build the filtered message list and prompt for memory extraction."""
+    from ohmycode.core.messages import UserMessage
+
+    filtered = filter_messages_for_extraction(messages)
+    conversation_text = "\n".join(
+        f"{getattr(m, 'role', 'user')}: {getattr(m, 'content', '')}"
+        for m in filtered
+    )
+    if not conversation_text.strip():
+        return None
+    prompt = (
+        "Analyze this conversation and extract key facts worth remembering. "
+        "For each memory, output a JSON object on its own line with keys: "
+        '"name" (short label), "type" (one of: user, feedback, project, reference), "content" (1-2 sentences). '
+        "Output ONLY JSON lines, no other text.\n\n"
+        f"{conversation_text}"
+    )
+    return [UserMessage(content=prompt)]
+
+
+_EXTRACTION_SYSTEM = "You are a helpful assistant that extracts memorable facts from conversations."
+
+
 async def extract_memories_from_conversation(
     messages: list,
     provider,
@@ -297,29 +321,29 @@ async def extract_memories_from_conversation(
 ) -> List[dict]:
     """Use LLM to extract memorable facts from the conversation."""
     try:
-        from ohmycode.core.messages import UserMessage
-
-        filtered = filter_messages_for_extraction(messages)
-        conversation_text = "\n".join(
-            f"{getattr(m, 'role', 'user')}: {getattr(m, 'content', '')}"
-            for m in filtered
-        )
-        if not conversation_text.strip():
+        request = _build_extraction_request(messages)
+        if request is None:
             return []
-
-        prompt = (
-            "Analyze this conversation and extract key facts worth remembering. "
-            "For each memory, output a JSON object on its own line with keys: "
-            '"name" (short label), "type" (one of: user, feedback, project, reference), "content" (1-2 sentences). '
-            "Output ONLY JSON lines, no other text.\n\n"
-            f"{conversation_text}"
-        )
-        request = [UserMessage(content=prompt)]
         from ohmycode.providers.base import stream_to_text
-        raw_text = await stream_to_text(
-            provider, request, model,
-            system="You are a helpful assistant that extracts memorable facts from conversations.",
-        )
+        raw_text = await stream_to_text(provider, request, model, system=_EXTRACTION_SYSTEM)
+        return parse_extraction_response(raw_text)
+    except Exception:
+        return []
+
+
+async def extract_memories_with_box(
+    messages: list,
+    provider,
+    model: str,
+    box,
+) -> List[dict]:
+    """Like extract_memories_from_conversation but streams output to a MemoryBox for live display."""
+    try:
+        request = _build_extraction_request(messages)
+        if request is None:
+            return []
+        from ohmycode.providers.base import stream_to_box
+        raw_text = await stream_to_box(provider, request, model, system=_EXTRACTION_SYSTEM, box=box)
         return parse_extraction_response(raw_text)
     except Exception:
         return []
