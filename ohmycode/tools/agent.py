@@ -41,7 +41,7 @@ class AgentTool(Tool):
         import time
         from ohmycode.core.loop import ConversationLoop
         from ohmycode.config.config import OhMyCodeConfig
-        from ohmycode._cli.output import SubAgentBox, _is_interactive
+        from ohmycode._cli.output import SubAgentBox, _is_interactive, _spinner_task, _cancel_spinner
         from ohmycode.core.messages import TextChunk, ToolCallStart
 
         try:
@@ -58,36 +58,9 @@ class AgentTool(Tool):
             # Spinner shown from initialization through the first tool call
             spinner_task = None
             if box is not None:
-                _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-                _t_start = time.monotonic()
-
-                async def _spinner():
-                    idx = 0
-                    try:
-                        while True:
-                            elapsed = time.monotonic() - _t_start
-                            frame = _SPINNER_FRAMES[idx % len(_SPINNER_FRAMES)]
-                            sys.stdout.write(
-                                f"\r  \033[2m{frame} Sub-agent starting... {elapsed:.0f}s\033[0m\033[K"
-                            )
-                            sys.stdout.flush()
-                            idx += 1
-                            await asyncio.sleep(0.1)
-                    except asyncio.CancelledError:
-                        sys.stdout.write("\r\033[K")
-                        sys.stdout.flush()
-
-                spinner_task = asyncio.create_task(_spinner())
-
-            async def _cancel_spinner():
-                nonlocal spinner_task
-                if spinner_task and not spinner_task.done():
-                    spinner_task.cancel()
-                    try:
-                        await spinner_task
-                    except asyncio.CancelledError:
-                        pass
-                    spinner_task = None
+                spinner_task = asyncio.create_task(
+                    _spinner_task("Sub-agent starting...", time.monotonic())
+                )
 
             sub_loop = ConversationLoop(config)
             sub_loop.initialize()
@@ -100,7 +73,7 @@ class AgentTool(Tool):
                     if isinstance(event, TextChunk):
                         collected_text += event.text
                     elif isinstance(event, ToolCallStart) and box is not None:
-                        await _cancel_spinner()
+                        await _cancel_spinner(spinner_task)
                         box.push_tool(event.tool_name)
             except Exception as exc:
                 error_result = ToolResult(
@@ -108,7 +81,7 @@ class AgentTool(Tool):
                     is_error=True,
                 )
             finally:
-                await _cancel_spinner()
+                await _cancel_spinner(spinner_task)
                 if box is not None:
                     if error_result is None:
                         box.finish()

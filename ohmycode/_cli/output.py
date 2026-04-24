@@ -14,6 +14,7 @@ from ohmycode.core.loop import ConversationLoop
 from ohmycode.core.messages import (
     TextChunk,
     ThinkingChunk,
+    ToolCallStreaming,
     ToolCallStart,
     ToolCallResult,
     TurnComplete,
@@ -27,6 +28,31 @@ _BOX_CONTENT_WIDTH = 60
 _BOX_LINES = 3
 _BOX_THROTTLE = 0.05
 _ACCENT_ESC = "\033[38;2;255;107;157m"
+_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+
+async def _spinner_task(message: str, t_start: float) -> None:
+    idx = 0
+    try:
+        while True:
+            elapsed = time.monotonic() - t_start
+            frame = _SPINNER_FRAMES[idx % len(_SPINNER_FRAMES)]
+            sys.stdout.write(f"\r  \033[2m{frame} {message} {elapsed:.0f}s\033[0m\033[K")
+            sys.stdout.flush()
+            idx += 1
+            await asyncio.sleep(0.1)
+    except asyncio.CancelledError:
+        sys.stdout.write("\r\033[K")
+        sys.stdout.flush()
+
+
+async def _cancel_spinner(task: "asyncio.Task | None") -> None:
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 def _is_interactive() -> bool:
@@ -153,41 +179,30 @@ async def render_stream(conv: ConversationLoop) -> str:
     text_printed = False
     tool_count = 0
 
-    SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     thinking = True
     t_start = time.monotonic()
-    spinner_task = None
-
-    async def _spinner():
-        idx = 0
-        try:
-            while True:
-                elapsed = time.monotonic() - t_start
-                frame = SPINNER_FRAMES[idx % len(SPINNER_FRAMES)]
-                sys.stdout.write(f"\r  \033[2m{frame} Waiting... {elapsed:.0f}s\033[0m\033[K")
-                sys.stdout.flush()
-                idx += 1
-                await asyncio.sleep(0.1)
-        except asyncio.CancelledError:
-            sys.stdout.write("\r\033[K")
-            sys.stdout.flush()
-
-    spinner_task = asyncio.create_task(_spinner())
+    spinner_task = asyncio.create_task(_spinner_task("Waiting...", t_start))
+    tool_spinner_task: asyncio.Task | None = None
     box = ThinkingBox()
 
     try:
         async for event in conv.run_turn():
             if thinking:
                 thinking = False
-                if spinner_task and not spinner_task.done():
-                    spinner_task.cancel()
-                    try:
-                        await spinner_task
-                    except asyncio.CancelledError:
-                        pass
+                await _cancel_spinner(spinner_task)
                 if conv.think:
                     sys.stdout.write("\n")
                     sys.stdout.flush()
+
+            if isinstance(event, ToolCallStreaming):
+                if tool_spinner_task is None or tool_spinner_task.done():
+                    if text_printed:
+                        console.print()
+                        text_printed = False
+                    tool_spinner_task = asyncio.create_task(
+                        _spinner_task("Preparing...", time.monotonic())
+                    )
+                continue
 
             if isinstance(event, ThinkingChunk):
                 if conv.think:
@@ -208,6 +223,8 @@ async def render_stream(conv: ConversationLoop) -> str:
                 text_printed = True
 
             elif isinstance(event, ToolCallStart):
+                await _cancel_spinner(tool_spinner_task)
+                tool_spinner_task = None
                 if box.visible:
                     box.clear()
                 if text_printed:
@@ -263,11 +280,7 @@ async def render_stream(conv: ConversationLoop) -> str:
     finally:
         if box.visible:
             box.clear()
-        if spinner_task and not spinner_task.done():
-            spinner_task.cancel()
-            try:
-                await spinner_task
-            except asyncio.CancelledError:
-                pass
+        await _cancel_spinner(spinner_task)
+        await _cancel_spinner(tool_spinner_task)
 
     return finish_reason

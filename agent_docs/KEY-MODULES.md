@@ -100,8 +100,9 @@ await stream_to_box(provider, messages, model, system="", box=None) -> str
 `Provider.stream()` must yield events in this order:
 
 1. `TextChunk(text=...)` — zero or more text fragments
-2. `ToolCallStart(tool_name=..., tool_use_id=..., params=...)` — zero or more tool calls
-3. `TurnComplete(finish_reason=..., usage=...)` — **must be last**
+2. `ToolCallStreaming(tool_name=..., tool_use_id=...)` — emitted immediately when a tool call block starts streaming (params not yet available); used by CLI to show a "Preparing..." spinner
+3. `ToolCallStart(tool_name=..., tool_use_id=..., params=...)` — emitted after stream ends, once params are fully parsed; one per tool call
+4. `TurnComplete(finish_reason=..., usage=...)` — **must be last**
 
 ## core/loop.py
 
@@ -118,7 +119,7 @@ await stream_to_box(provider, messages, model, system="", box=None) -> str
 ## core/messages.py
 
 Message types: `UserMessage`, `AssistantMessage`, `ToolResultMessage`, `SystemMessage`  
-Event types: `TextChunk`, `ThinkingChunk`, `ToolCallStart`, `ToolCallResult`, `TurnComplete`, `TokenUsage`
+Event types: `TextChunk`, `ThinkingChunk`, `ToolCallStreaming`, `ToolCallStart`, `ToolCallResult`, `TurnComplete`, `TokenUsage`
 
 All messages implement `to_api_dict()` for the API payload.
 

@@ -12,6 +12,7 @@ from ohmycode.core.messages import (
     TextChunk,
     ThinkingChunk,
     TokenUsage,
+    ToolCallStreaming,
     ToolCallStart,
     TurnComplete,
     Message,
@@ -164,6 +165,7 @@ class AnthropicProvider:
                             "arguments": "",
                         }
                         current_tool_index = idx
+                        yield ToolCallStreaming(tool_name=block.name, tool_use_id=block.id)
 
                 elif event_type == "content_block_delta":
                     delta = event.delta

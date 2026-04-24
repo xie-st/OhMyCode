@@ -13,6 +13,7 @@ from ohmycode.core.messages import (
     StreamEvent,
     TextChunk,
     TokenUsage,
+    ToolCallStreaming,
     ToolCallStart,
     TurnComplete,
     Message,
@@ -113,6 +114,10 @@ class OpenAIProvider:
                             "name": tc_delta.function.name or "" if tc_delta.function else "",
                             "arguments": "",
                         }
+                        name = tool_calls_acc[idx]["name"]
+                        uid = tool_calls_acc[idx]["id"]
+                        if name:
+                            yield ToolCallStreaming(tool_name=name, tool_use_id=uid)
                     if tc_delta.id:
                         tool_calls_acc[idx]["id"] = tc_delta.id
                     if tc_delta.function:

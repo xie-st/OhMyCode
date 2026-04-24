@@ -125,6 +125,14 @@ class ThinkingChunk:
 
 
 @dataclass
+class ToolCallStreaming:
+    """A tool call has started streaming; name is known but params not yet complete."""
+
+    tool_name: str
+    tool_use_id: str
+
+
+@dataclass
 class ToolCallStart:
     """Notification: a tool call was parsed from the stream."""
 
@@ -158,4 +166,4 @@ class TurnComplete:
 
 
 # Union of all events the loop may yield
-StreamEvent = Union[TextChunk, ThinkingChunk, ToolCallStart, ToolCallResult, TurnComplete]
+StreamEvent = Union[TextChunk, ThinkingChunk, ToolCallStreaming, ToolCallStart, ToolCallResult, TurnComplete]
