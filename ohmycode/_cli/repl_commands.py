@@ -12,6 +12,7 @@ from ohmycode.memory.memory import (
     get_project_memory_dir,
     VALID_CATEGORIES,
     extract_memories_with_box,
+    extract_memories_with_box_cancellable,
 )
 from ohmycode.skills.loader import load_skill, SkillInfo
 from ohmycode.storage.conversation import (
@@ -45,6 +46,7 @@ async def handle_slash_command(
     set_conv: Callable[[ConversationLoop], None] = lambda c: None,
     set_config: Callable[[OhMyCodeConfig], None] = lambda c: None,
     set_resumed_filename: Callable[[str | None], None] = lambda f: None,
+    cancel_event: Any = None,
 ) -> str | int:
     """Dispatch a slash command. Returns 'continue', 'break', or an int exit code."""
     args = parts[1] if len(parts) > 1 else ""
@@ -66,6 +68,8 @@ async def handle_slash_command(
                 repl_print_plain(f"  Extracting memories from {n} conversation{'s' if n > 1 else ''}...")
                 _store = BTreeMemoryStore(get_project_memory_dir(os.getcwd()))
                 _store.ensure_tree()
+                if cancel_event is not None:
+                    cancel_event.clear()
                 for i, filename in enumerate(pending, 1):
                     result = load_conversation(filename)
                     if result is None:
@@ -74,15 +78,26 @@ async def handle_slash_command(
                     msgs, _ = result
                     box = MemoryBox()
                     try:
-                        memories = await extract_memories_with_box(msgs, conv._provider, config.model, box)
+                        memories, cancelled = await extract_memories_with_box_cancellable(
+                            msgs, conv._provider, config.model, box, cancel_event
+                        )
                     except Exception:
-                        memories = []
+                        memories, cancelled = [], False
                     box.clear()
+                    if cancelled:
+                        skipped = n - (i - 1)
+                        repl_print_plain(
+                            f"  Memory extraction cancelled — {skipped} conversation"
+                            f"{'s' if skipped != 1 else ''} skipped"
+                        )
+                        break
                     for m in memories:
                         _store.save(m["name"], m["type"], m["content"])
                     mark_conversation_memories_extracted(filename)
                     count = len(memories)
                     repl_print_plain(f"  ✓ Conversation {i} ({count} memor{'y' if count == 1 else 'ies'} saved)")
+                if cancel_event is not None:
+                    cancel_event.clear()
         return 0
 
     if cmd == "/clear":

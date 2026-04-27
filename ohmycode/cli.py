@@ -463,6 +463,7 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
                 set_conv=set_conv,
                 set_config=set_config,
                 set_resumed_filename=set_resumed_filename,
+                cancel_event=cancel_event,
             )
             if isinstance(result, int):
                 return result
