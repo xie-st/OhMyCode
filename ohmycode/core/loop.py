@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from typing import AsyncIterator, Callable, Awaitable, Any
 
 from ohmycode.core.messages import (
@@ -81,7 +82,11 @@ class ConversationLoop:
             store = BTreeMemoryStore(mem_dir)
             store.ensure_tree()
             memory_content = store.get_root_index()
-        except Exception:
+        except Exception as exc:
+            print(
+                f"[memory] store unavailable: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
             mem_dir = ""
             memory_content = ""
 

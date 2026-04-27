@@ -5,6 +5,7 @@ from __future__ import annotations
 from ohmycode.tools.base import Tool, ToolContext, ToolResult, register_tool
 
 MAX_AGENT_DEPTH = 2
+_OUTPUT_CHAR_LIMIT = 10000
 
 
 @register_tool
@@ -91,9 +92,8 @@ class AgentTool(Tool):
             if error_result is not None:
                 return error_result
 
-            # Truncate to 10000 characters
-            if len(collected_text) > 10000:
-                collected_text = collected_text[:10000]
+            if len(collected_text) > _OUTPUT_CHAR_LIMIT:
+                collected_text = collected_text[:_OUTPUT_CHAR_LIMIT]
 
             return ToolResult(output=collected_text, is_error=False)
 

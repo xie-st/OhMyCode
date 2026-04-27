@@ -24,6 +24,28 @@ from ohmycode.core.messages import (
 from ohmycode.providers.base import ToolDef, register_provider
 
 
+# Claude 4 generation supports adaptive thinking; older models use manual budgets.
+_ADAPTIVE_THINKING_MODELS = ("claude-opus-4", "claude-sonnet-4", "claude-haiku-4")
+_LEGACY_THINKING_BUDGETS = {"low": 1024, "medium": 8000, "high": 32000}
+_THINKING_MIN_MAX_TOKENS = 16000
+
+
+def _resolve_thinking_kwargs(model: str, effort: str, current_max_tokens: int) -> dict:
+    """Build the request kwargs needed to enable extended thinking for `model`.
+
+    Returns a dict with `thinking` and (if needed) a raised `max_tokens`.
+    """
+    out: dict = {}
+    if any(m in model for m in _ADAPTIVE_THINKING_MODELS):
+        out["thinking"] = {"type": "adaptive", "effort": effort}
+    else:
+        budget = _LEGACY_THINKING_BUDGETS.get(effort, _LEGACY_THINKING_BUDGETS["medium"])
+        out["thinking"] = {"type": "enabled", "budget_tokens": budget}
+    if current_max_tokens < _THINKING_MIN_MAX_TOKENS:
+        out["max_tokens"] = _THINKING_MIN_MAX_TOKENS
+    return out
+
+
 class AnthropicProvider:
     name = "anthropic"
 
@@ -128,20 +150,13 @@ class AnthropicProvider:
             ]
 
         if "reasoning_effort" in kwargs:
-            effort = kwargs["reasoning_effort"]
-            # Claude 4 models use adaptive thinking; older models use manual extended thinking
-            _adaptive_markers = ("claude-opus-4", "claude-sonnet-4", "claude-haiku-4")
-            if any(m in model for m in _adaptive_markers):
-                request_kwargs["thinking"] = {"type": "adaptive", "effort": effort}
-            else:
-                budget_map = {"low": 1024, "medium": 8000, "high": 32000}
-                request_kwargs["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": budget_map.get(effort, 8000),
-                }
-            # thinking requires a generous max_tokens budget
-            if request_kwargs.get("max_tokens", 0) < 16000:
-                request_kwargs["max_tokens"] = 16000
+            request_kwargs.update(
+                _resolve_thinking_kwargs(
+                    model=model,
+                    effort=kwargs["reasoning_effort"],
+                    current_max_tokens=request_kwargs.get("max_tokens", 0),
+                )
+            )
 
         finish_reason = "stop"
         prompt_tokens = 0

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import platform
 from pathlib import Path
+from ohmycode.core.permissions import MODE_AUTO, MODE_DEFAULT, MODE_PLAN
 from ohmycode.tools.base import TOOL_REGISTRY
 
 def _build_memory_section(memory_content: str, memory_dir: str) -> str:
@@ -62,11 +63,11 @@ def build_system_prompt(mode: str, cwd: str, memory_content: str = "",
         f"- Python: {platform.python_version()}")
     parts.append(env_info)
     mode_descriptions = {
-        "default": "You are in DEFAULT mode. Dangerous operations (file writes, shell commands) will ask the user for confirmation.",
-        "auto": "You are in AUTO mode. All tool calls are executed without user confirmation.",
-        "plan": "You are in PLAN mode (read-only). You can read files and search, but CANNOT write files, edit, or execute commands.",
+        MODE_DEFAULT: "You are in DEFAULT mode. Dangerous operations (file writes, shell commands) will ask the user for confirmation.",
+        MODE_AUTO: "You are in AUTO mode. All tool calls are executed without user confirmation.",
+        MODE_PLAN: "You are in PLAN mode (read-only). You can read files and search, but CANNOT write files, edit, or execute commands.",
     }
-    parts.append(f"# Mode\n{mode_descriptions.get(mode, mode_descriptions['default'])}")
+    parts.append(f"# Mode\n{mode_descriptions.get(mode, mode_descriptions[MODE_DEFAULT])}")
     if TOOL_REGISTRY:
         tool_lines = ["# Available Tools"]
         for name, tool_cls in sorted(TOOL_REGISTRY.items()):

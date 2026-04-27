@@ -5,8 +5,13 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-DANGEROUS_TOOLS = {"bash", "edit", "write", "agent"}
-PLAN_BLOCKED_TOOLS = {"bash", "edit", "write", "agent"}
+MODE_DEFAULT = "default"
+MODE_AUTO = "auto"
+MODE_PLAN = "plan"
+MODES = (MODE_DEFAULT, MODE_AUTO, MODE_PLAN)
+
+# Tools that mutate the filesystem or execute code; gated in default + plan modes.
+WRITE_TOOLS = frozenset({"bash", "edit", "write", "agent"})
 
 @dataclass
 class PermissionResult:
@@ -47,12 +52,12 @@ def check_permission(tool_name: str, params: dict[str, Any], mode: str,
         return PermissionResult(action="deny", reason="Blocked by rule")
     if rule_action == "allow":
         return PermissionResult(action="allow", reason="Allowed by rule")
-    if mode == "plan" and tool_name in PLAN_BLOCKED_TOOLS:
+    if mode == MODE_PLAN and tool_name in WRITE_TOOLS:
         return PermissionResult(action="deny", reason=f"Plan mode: {tool_name} is not allowed")
-    if mode == "auto":
+    if mode == MODE_AUTO:
         return PermissionResult(action="allow", reason="Auto mode")
     if auto_approved.get(tool_name):
         return PermissionResult(action="allow", reason="Auto-approved for this session")
-    if mode == "default" and tool_name in DANGEROUS_TOOLS:
+    if mode == MODE_DEFAULT and tool_name in WRITE_TOOLS:
         return PermissionResult(action="ask", reason=f"{tool_name} requires user confirmation")
     return PermissionResult(action="allow", reason="Safe tool")

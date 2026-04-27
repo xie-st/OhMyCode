@@ -34,6 +34,7 @@ from rich.text import Text
 from ohmycode.config.config import load_config, OhMyCodeConfig
 from ohmycode.core.loop import ConversationLoop
 from ohmycode.core.file_ref import expand_file_refs
+from ohmycode.core.permissions import MODES
 from ohmycode.skills.loader import scan_skills
 from ohmycode.storage.conversation import load_conversation
 
@@ -99,8 +100,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         metavar="MODE",
-        choices=["default", "auto", "plan"],
-        help="Permission mode: default | auto | plan.",
+        choices=list(MODES),
+        help=f"Permission mode: {' | '.join(MODES)}.",
     )
     parser.add_argument(
         "--api-key",

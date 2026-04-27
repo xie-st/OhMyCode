@@ -15,6 +15,7 @@ import random
 import re
 import string
 import subprocess
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -145,8 +146,11 @@ class BTreeMemoryStore:
                 raw = md_file.read_text(encoding="utf-8")
                 name, mem_type = _parse_frontmatter_meta(raw)
                 results.append({"name": name, "type": mem_type, "filename": md_file.name})
-            except Exception:
-                pass
+            except (OSError, ValueError) as exc:
+                print(
+                    f"[memory] skipped {md_file.name}: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
         return results
 
     def get_category_summary(self, category: str) -> str:
