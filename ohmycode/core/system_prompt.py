@@ -5,8 +5,46 @@ import platform
 from pathlib import Path
 from ohmycode.tools.base import TOOL_REGISTRY
 
+def _build_memory_section(memory_content: str, memory_dir: str) -> str:
+    """Compose the # Memory section.
+
+    The index alone tells the model what exists; this section also tells it
+    where the full entries live, when to expand them, and how. Without that,
+    the index reads as decoration and gets ignored.
+    """
+    lines: list[str] = ["# Memory"]
+    lines.append(
+        "The index below lists what you remember about this user and project "
+        "from prior sessions. Each entry name hints at content stored on disk; "
+        "the index itself is intentionally terse to save tokens."
+    )
+    lines.append(memory_content.rstrip())
+
+    has_entries = "(no memories yet)" not in memory_content
+    if has_entries and memory_dir:
+        lines.append(
+            "Full entries live under:\n"
+            f"  {memory_dir}/<category>/<filename>.md\n"
+            "Category is one of: user, feedback, project, reference. "
+            "Filenames are listed in each category's _SUMMARY.md. "
+            "Use the read tool to open an entry when its name looks relevant."
+        )
+        lines.append(
+            "When to consult memory (do this before answering, not after):\n"
+            "- The user references prior work, decisions, or 'what we discussed'.\n"
+            "- An index entry name plausibly matches the current task — open it.\n"
+            "- The user states a preference or correction that may already be recorded.\n"
+            "- You're about to make a judgment call (style, tooling, scope) where "
+            "  past feedback would change the answer.\n"
+            "Skip memory for trivial questions or when the index is clearly unrelated. "
+            "Don't announce that you're checking — just check, then act."
+        )
+    return "\n\n".join(lines)
+
+
 def build_system_prompt(mode: str, cwd: str, memory_content: str = "",
-    project_instructions: str = "", system_prompt_append: str = "") -> str:
+    memory_dir: str = "", project_instructions: str = "",
+    system_prompt_append: str = "") -> str:
     parts: list[str] = []
     parts.append(
         "You are OhMyCode, an AI coding assistant running in the user's terminal. "
@@ -17,7 +55,7 @@ def build_system_prompt(mode: str, cwd: str, memory_content: str = "",
     if project_instructions:
         parts.append(f"# Project Instructions\n{project_instructions}")
     if memory_content:
-        parts.append(f"# Memory\n{memory_content}")
+        parts.append(_build_memory_section(memory_content, memory_dir))
     env_info = (f"# Environment\n- Working directory: {cwd}\n"
         f"- Platform: {platform.system()} {platform.release()}\n"
         f"- Shell: {os.environ.get('SHELL', 'unknown')}\n"

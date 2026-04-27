@@ -48,6 +48,27 @@ def test_build_includes_memory():
     assert "Memory" in prompt
 
 
+def test_memory_section_includes_usage_guidance_when_entries_exist():
+    prompt = build_system_prompt(
+        mode="auto",
+        cwd="/tmp",
+        memory_content="- user (1): prefers_vim",
+        memory_dir="/home/u/.ohmycode/projects/abc/memory",
+    )
+    assert "/home/u/.ohmycode/projects/abc/memory" in prompt
+    assert "When to consult memory" in prompt
+
+
+def test_memory_section_omits_guidance_when_empty():
+    prompt = build_system_prompt(
+        mode="auto",
+        cwd="/tmp",
+        memory_content="# Memory Index\n(no memories yet)",
+        memory_dir="/home/u/.ohmycode/projects/abc/memory",
+    )
+    assert "When to consult memory" not in prompt
+
+
 def test_build_includes_append():
     prompt = build_system_prompt(
         mode="auto", cwd="/tmp", system_prompt_append="Custom footer."

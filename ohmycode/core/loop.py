@@ -74,12 +74,15 @@ class ConversationLoop:
         cwd = os.getcwd()
         project_instructions = find_project_instructions(cwd)
 
+        mem_dir = ""
+        memory_content = ""
         try:
             mem_dir = get_project_memory_dir(cwd)
             store = BTreeMemoryStore(mem_dir)
             store.ensure_tree()
             memory_content = store.get_root_index()
         except Exception:
+            mem_dir = ""
             memory_content = ""
 
         self._system_prompt = build_system_prompt(
@@ -87,6 +90,7 @@ class ConversationLoop:
             cwd=cwd,
             project_instructions=project_instructions,
             memory_content=memory_content,
+            memory_dir=mem_dir,
             system_prompt_append=self.config.system_prompt_append,
         )
 
