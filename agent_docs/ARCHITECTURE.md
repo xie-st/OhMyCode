@@ -54,7 +54,12 @@ User input → cli.py
 
 | Module | File | Role |
 |--------|------|------|
-| CLI entry | `cli.py` | Argument parsing, `run_single`, `run_repl` orchestration, `run_vchange`, `confirm_tool_call` |
+| CLI entry | `cli.py` | Argument parsing + dispatch only; Windows ANSI guard at module top |
+| Single-shot mode | `_cli/single_shot.py` | `run_single()` — one prompt then exit |
+| REPL mode | `_cli/repl.py` | `run_repl()` + `_stream_with_cancel` (Ctrl+C handling) |
+| Welcome banner | `_cli/welcome.py` | ASCII block banner + meta rows |
+| Tool confirmation | `_cli/confirm.py` | `confirm_tool_call()` y/n/a prompt |
+| `vchange` subcommand | `commands/vchange.py` | git-based version switch |
 | Stream rendering | `_cli/output.py` | `ScrollingBox` base + `ThinkingBox` / `MemoryBox` / `SubAgentBox` panels, `render_stream` async consumer, spinner |
 | Prompt session | `_cli/prompt_session.py` | `SlashCompleter`, prompt_toolkit session factory (Enter selects, not submits) |
 | REPL commands | `_cli/repl_commands.py` | `/exit` `/clear` `/new` `/mode` `/status` `/memory` `/think` `/skills` + skill dispatch |

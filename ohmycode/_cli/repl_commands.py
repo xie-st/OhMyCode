@@ -195,9 +195,8 @@ async def handle_slash_command(
             except ValueError:
                 repl_print("[red]Usage: /vchange [-N|N]  (e.g. /vchange -1)[/red]")
                 return "continue"
-        # run_vchange lives in cli.py; import here to avoid circular dependency
-        from ohmycode import cli as _cli_module
-        _cli_module.run_vchange(step)
+        from ohmycode.commands.vchange import run_vchange
+        run_vchange(step)
         return "continue"
 
     if cmd == "/think":
