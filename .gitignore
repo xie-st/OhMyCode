@@ -51,6 +51,9 @@ htmlcov/
 *~
 log/sessions/*.jsonl
 
+# Local git worktrees
+.worktrees/
+
 # Local reference materials
 reference/
 docs/superpowers/
