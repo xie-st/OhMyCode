@@ -89,3 +89,29 @@ async def test_multiple_responses(mock_provider):
     events2 = [e async for e in conv2.run_turn()]
     texts2 = [e.text for e in events2 if isinstance(e, TextChunk)]
     assert texts2[0] == "Second response"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_uses_system_prompt_override():
+    class CapturingProvider:
+        name = "capture"
+
+        def __init__(self):
+            self.systems = []
+
+        async def stream(self, messages, tools, system, model, **kwargs):
+            self.systems.append(system)
+            yield TextChunk(text="ok")
+            yield TurnComplete(finish_reason="stop", usage=None)
+
+    provider = CapturingProvider()
+    config = OhMyCodeConfig(provider="mock", model="test", mode="auto", api_key="x")
+    conv = ConversationLoop(config=config)
+    conv._provider = provider
+    conv._system_prompt = "base"
+    conv.add_user_message("Hi")
+
+    events = [e async for e in conv.run_turn(system_prompt_override="base\n\npacket")]
+
+    assert provider.systems == ["base\n\npacket"]
+    assert any(isinstance(e, TurnComplete) for e in events)

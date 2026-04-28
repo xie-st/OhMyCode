@@ -32,6 +32,12 @@ ohmycode/
 │   └── agent.py         # Sub-agent
 ├── memory/
 │   └── memory.py        # Memory system (MEMORY.md index)
+├── context/
+│   ├── store.py         # JSONL event log + SQLite derived context indexes
+│   ├── runtime.py       # REPL-owned routing, packet cache, background tasks
+│   ├── projection.py    # Topic transcript projection into virtual messages
+│   ├── compression.py   # Lazy topic-level compression cache
+│   └── curator.py       # Async curator for topics, packets, slices
 ├── storage/
 │   └── conversation.py  # Conversation persistence + resume
 └── config/

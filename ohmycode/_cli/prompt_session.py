@@ -75,6 +75,7 @@ def build_prompt_session(
             "/new": "Save current conversation and start fresh",
             "/mode": "Switch mode (default|auto|plan)",
             "/status": "Show context and session status",
+            "/context": "Show or adjust long-term context",
             "/memory": "Manage memories",
             "/vchange": "Version switch (-1 back / 1 forward)",
             "/skills": "List all skills",

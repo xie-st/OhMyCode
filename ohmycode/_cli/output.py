@@ -175,7 +175,10 @@ class SubAgentBox(ScrollingBox):
         self.clear()
 
 
-async def render_stream(conv: ConversationLoop) -> str:
+async def render_stream(
+    conv: ConversationLoop,
+    system_prompt_override: str | None = None,
+) -> str:
     """Consume run_turn() event stream, render to terminal, return finish_reason."""
     finish_reason = "stop"
     text_printed = False
@@ -189,7 +192,7 @@ async def render_stream(conv: ConversationLoop) -> str:
     sub_agent_box: SubAgentBox | None = None
 
     try:
-        async for event in conv.run_turn():
+        async for event in conv.run_turn(system_prompt_override=system_prompt_override):
             if thinking:
                 thinking = False
                 await _cancel_spinner(spinner_task)

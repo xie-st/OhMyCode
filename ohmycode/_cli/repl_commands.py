@@ -6,6 +6,7 @@ import os
 from typing import Any, Callable
 
 from ohmycode.config.config import load_config, OhMyCodeConfig
+from ohmycode.context.runtime import ContextRuntime
 from ohmycode.core.loop import ConversationLoop
 from ohmycode.memory.memory import (
     BTreeMemoryStore,
@@ -47,6 +48,8 @@ async def handle_slash_command(
     set_config: Callable[[OhMyCodeConfig], None] = lambda c: None,
     set_resumed_filename: Callable[[str | None], None] = lambda f: None,
     cancel_event: Any = None,
+    context_runtime: ContextRuntime | None = None,
+    schedule_context_curator: Callable[[], None] | None = None,
 ) -> str | int:
     """Dispatch a slash command. Returns 'continue', 'break', or an int exit code."""
     args = parts[1] if len(parts) > 1 else ""
@@ -119,6 +122,12 @@ async def handle_slash_command(
                 repl_print(f"[red]Failed to save conversation: {e}[/red]")
                 repl_print("[dim]Conversation not reset. Fix the error and try again.[/dim]")
                 return "continue"
+        if context_runtime is not None:
+            conv.messages.clear()
+            conv.auto_approved.clear()
+            set_resumed_filename(None)
+            repl_print("[dim]New short-term conversation started. Long-term context kept.[/dim]")
+            return "continue"
         new_conv = ConversationLoop(config=config, confirm_fn=confirm_tool_call)
         new_conv.initialize()
         set_conv(new_conv)
@@ -166,6 +175,14 @@ async def handle_slash_command(
         repl_print(f"    [dim]Compression stage:[/] {status['compression_stage']}")
         repl_print()
         return "continue"
+
+    if cmd == "/context":
+        return _handle_context_command(
+            args,
+            context_runtime,
+            repl_print,
+            schedule_context_curator,
+        )
 
     if raw_input.startswith("/memory"):
         mem_parts = raw_input.split(maxsplit=2)
@@ -242,5 +259,90 @@ async def handle_slash_command(
             repl_print("\n[yellow](Interrupted — partial reply saved to history. Continue or /exit)[/yellow]")
     else:
         repl_print(f"[red]Unknown command: {cmd}[/red]")
-        repl_print("[dim]Available: /exit /clear /new /mode /status /memory /skills[/dim]")
+        repl_print("[dim]Available: /exit /clear /new /mode /status /context /memory /skills[/dim]")
+    return "continue"
+
+
+def _handle_context_command(
+    args: str,
+    context_runtime: ContextRuntime | None,
+    repl_print: Callable,
+    schedule_context_curator: Callable[[], None] | None,
+) -> str:
+    if context_runtime is None:
+        repl_print("[yellow]Long-term context is disabled.[/yellow]")
+        return "continue"
+
+    arg = args.strip()
+    if not arg:
+        packet = context_runtime.get_active_packet()
+        active = packet.topic_id or "(none)"
+        repl_print()
+        repl_print("  [bold]Long-term context[/]")
+        repl_print(f"    [dim]Active topic:[/] {active}")
+        repl_print(f"    [dim]Packet version:[/] {packet.version}")
+        repl_print(
+            "    [dim]Curator:[/] "
+            + ("running" if context_runtime.curator_running else "idle")
+            + (" (pending)" if context_runtime.curator_pending else "")
+        )
+        if packet.title:
+            repl_print(f"    [dim]Title:[/] {packet.title}")
+        if packet.summary:
+            repl_print(f"    [dim]Summary:[/] {packet.summary}")
+        if packet.topic_id:
+            cache = context_runtime.store.load_compression_cache(packet.topic_id)
+            repl_print(
+                f"    [dim]Slices:[/] {context_runtime.store.count_topic_slices(packet.topic_id)}    "
+                f"[dim]Projected messages:[/] "
+                f"{context_runtime.store.get_state('last_projection_message_count', '0')}"
+            )
+            if cache is not None:
+                repl_print(
+                    f"    [dim]Compressed until event:[/] {cache.compressed_until_event_id}    "
+                    f"[dim]Raw tail:[/] "
+                    f"{context_runtime.store.get_state('last_projection_raw_tail_count', '0')}"
+                )
+            else:
+                repl_print("[dim]Compression cache:[/] none")
+        repl_print()
+        return "continue"
+
+    if arg == "topics":
+        topics = context_runtime.store.list_topics()
+        if not topics:
+            repl_print("[dim]No context topics yet.[/dim]")
+            return "continue"
+        repl_print("\n  [bold]Context topics[/]")
+        for topic in topics:
+            label = topic.title or topic.id
+            slices = context_runtime.store.count_topic_slices(topic.id)
+            cache = context_runtime.store.load_compression_cache(topic.id)
+            cache_label = "compressed" if cache is not None else "raw"
+            repl_print(
+                f"    [cyan]{topic.id}[/] [dim]{label}[/] "
+                f"[dim]slices={slices} {cache_label}[/]"
+            )
+        repl_print()
+        return "continue"
+
+    if arg.startswith("switch "):
+        topic_id = arg.split(maxsplit=1)[1].strip()
+        if context_runtime.switch_topic(topic_id):
+            repl_print(f"[dim]Active context topic switched to {topic_id}.[/dim]")
+        else:
+            repl_print(f"[yellow]Unknown context topic: {topic_id}[/yellow]")
+        return "continue"
+
+    if arg == "rebuild":
+        context_runtime.store.append_event(
+            "context_correction", "Requested packet rebuild", {"action": "rebuild"}
+        )
+        context_runtime.store.set_state("packet_rebuild_requested", "1")
+        if schedule_context_curator is not None:
+            schedule_context_curator()
+        repl_print("[dim]Context packet rebuild requested.[/dim]")
+        return "continue"
+
+    repl_print("[red]Usage: /context [topics|switch <topic_id>|rebuild][/red]")
     return "continue"

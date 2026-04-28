@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import locale
 
 from ohmycode.tools.base import Tool, ToolContext, ToolResult, register_tool
 
@@ -52,7 +53,7 @@ class BashTool(Tool):
                     is_error=True,
                 )
 
-            output = stdout.decode(errors="replace")
+            output = _decode_output(stdout)
             is_error = proc.returncode != 0
             if is_error:
                 output = (output or "") + f"\nExit code: {proc.returncode}"
@@ -60,3 +61,29 @@ class BashTool(Tool):
 
         except Exception as exc:
             return ToolResult(output=f"Error executing command: {exc}", is_error=True)
+
+
+def _decode_output(data: bytes) -> str:
+    """Decode subprocess output without corrupting common non-UTF-8 terminals."""
+    if not data:
+        return ""
+    encodings = [
+        "utf-8-sig",
+        locale.getpreferredencoding(False),
+        "gbk",
+        "cp936",
+        "mbcs",
+    ]
+    seen: set[str] = set()
+    for encoding in encodings:
+        if not encoding:
+            continue
+        key = encoding.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            return data.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return data.decode("utf-8", errors="replace")

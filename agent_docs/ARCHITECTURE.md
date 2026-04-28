@@ -84,3 +84,18 @@ User input → cli.py
 3. **New skill** — `.claude/skills/<name>/SKILL.md` or `.claude/skills/<group>/<name>/SKILL.md` (same for `.ohmycode/skills/`, `.agents/skills/`)
 4. **Permission rules** — `rules` array in `config.json`
 5. **System prompt** — `CLAUDE.md` or `OHMYCODE.md` at project root, or `config.system_prompt_append`
+
+## Long-term Context Curator
+
+The REPL owns long-term context state through `ohmycode/context/runtime.py`. `ConversationLoop` still owns only short-term messages, provider streaming, compression, and tool execution.
+
+Normal REPL turns now add this pre/post layer:
+
+1. Expanded user input is appended to a daily JSONL event shard as `user_message`.
+2. `ContextRuntime.prepare_for_turn()` routes the message to an active topic and reuses or updates the cached `ContextPacket`.
+3. `_cli/context_flow.py` builds a topic transcript projection: same-topic turns keep the current `ConversationLoop.messages`; topic switches replace them with that topic's reconstructed virtual messages.
+4. `render_stream()` passes the projection system prompt to `ConversationLoop.run_turn()`.
+5. After the turn, assistant/tool/turn events are appended to the event log.
+6. A coalesced background `ContextCurator` task updates topic summaries, packet fields, and topic slices; lazy topic compression may then cache `compressed history + raw tail`.
+
+Long-term source events live under `~/.ohmycode/projects/<project_slug>/context/events/YYYY-MM-DD.jsonl`. `context.db` stores indexes and derived state: topics, packets, topic slices, compression cache, and curator state. `/new` clears only short-term `ConversationLoop.messages` when context is enabled; `/mode` creates a fresh loop for the mode but keeps the same REPL-owned context runtime.

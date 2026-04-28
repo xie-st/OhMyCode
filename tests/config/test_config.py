@@ -12,6 +12,8 @@ def test_default_config_has_required_keys():
     assert "mode" in DEFAULT_CONFIG
     assert "max_turns" in DEFAULT_CONFIG
     assert "rules" in DEFAULT_CONFIG
+    assert "context_enabled" in DEFAULT_CONFIG
+    assert "context_visibility" in DEFAULT_CONFIG
 
 
 def test_merge_scalar_override():
@@ -68,3 +70,5 @@ def test_ohmycode_config_validation():
     config = OhMyCodeConfig(**DEFAULT_CONFIG)
     assert config.max_turns == 100
     assert config.output_tokens_reserved == 8192
+    assert config.context_enabled is True
+    assert config.context_visibility == "silent"

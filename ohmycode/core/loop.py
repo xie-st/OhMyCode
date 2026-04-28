@@ -144,12 +144,16 @@ class ConversationLoop:
             "model": self.config.model,
         }
 
-    async def run_turn(self) -> AsyncIterator[StreamEvent]:
+    async def run_turn(
+        self,
+        system_prompt_override: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
         """Run one conversation turn (may include multiple tool round-trips).
 
         Yields StreamEvent for the caller (CLI) to render.
         """
         self._cancelled = False
+        turn_system_prompt = system_prompt_override or self._system_prompt
         turn_count = 0
         max_turns = self.config.max_turns
 
@@ -179,7 +183,7 @@ class ConversationLoop:
             # ── Context compression (if needed) ────────────────────────────────
             try:
                 self.messages = await self.context_mgr.maybe_compress(
-                    self.messages, self._system_prompt, self._provider, self.config.model
+                    self.messages, turn_system_prompt, self._provider, self.config.model
                 )
             except RuntimeError:
                 yield TurnComplete(finish_reason="error", usage=TokenUsage(0, 0, 0))
@@ -196,7 +200,7 @@ class ConversationLoop:
                 async for event in self._provider.stream(
                     messages=self.messages,
                     tools=tool_defs,
-                    system=self._system_prompt,
+                    system=turn_system_prompt,
                     model=self.config.model,
                     **stream_kwargs,
                 ):

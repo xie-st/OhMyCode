@@ -88,3 +88,25 @@ Fix: pass `config=self.config` when building the root `ToolContext` in `Conversa
 `run_turn()` uses explicit `isinstance` branches to decide what to do with each provider event. Unknown event types are **silently dropped** — they do not pass through automatically. When adding a new event type (e.g. `ThinkingChunk`), you must add a corresponding `elif isinstance(event, ThinkingChunk): yield event` branch in `run_turn()`, otherwise it never reaches the CLI.
 
 The `thinking_delta` content block delta from the Anthropic SDK uses `delta.thinking` (not `delta.text`) as the attribute name. The block type is identified via `delta.type == "thinking_delta"` in the `content_block_delta` event handler.
+
+## 18. Long-term context belongs to the REPL, not ConversationLoop
+
+`ConversationLoop` intentionally remains short-term: messages, compression, model streaming, permission checks, and tool execution. The single-window long-term state is owned by `_cli/repl.py` through `ContextRuntime` so it survives `/mode` and `/new` within the same REPL process.
+
+Do not store `ContextRuntime` on `ConversationLoop`; `/mode` may replace the loop. Pass the current packet as `system_prompt_override` to `render_stream()` / `run_turn()` instead.
+
+## 19. Curator scheduling is coalesced, not parallel
+
+`ContextRuntime.request_curator_run()` allows only one background curator task at a time. If another event arrives while it is running, it marks pending and runs one more pass after the current pass finishes. Starting parallel curators can race packet versions and `last_processed_event_id`.
+
+## 20. `/new` is short-term only when context is enabled
+
+With long-term context enabled, `/new` saves the current JSON conversation for backwards compatibility, then clears `ConversationLoop.messages` and `auto_approved`; it does not delete events, topics, packets, or the active topic. Use `/context switch <topic_id>` or `/context rebuild` to correct long-term context.
+
+## 21. Topic projection makes `ConversationLoop.messages` a virtual window
+
+When the user continues the same topic, the REPL leaves `ConversationLoop.messages` alone and appends the new user message. When routing switches topics, `_cli/context_flow.py` replaces `ConversationLoop.messages` with the target topic's reconstructed transcript before appending the current user message. Do not assume `messages` is the global recent linear log once long-term context is enabled.
+
+## 22. JSONL events are the source of truth; compression is only a cache
+
+Source events are written to daily `events/YYYY-MM-DD.jsonl` shards and indexed in SQLite. Topic slices and compression caches are derived state. Lazy topic compression must never rewrite or delete JSONL source events; projection combines `compressed_until_event_id` cache content with raw tail events after that watermark.

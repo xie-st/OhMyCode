@@ -26,6 +26,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "base_url": "",
     "api_key": "",
     "auth_token": "",
+    "context_enabled": True,
+    "context_visibility": "silent",
+    "context_ambiguity_confirmation": True,
+    "context_curator": "async",
 }
 
 
@@ -47,6 +51,10 @@ class OhMyCodeConfig(BaseModel):
     base_url: str = ""
     api_key: str = ""
     auth_token: str = ""
+    context_enabled: bool = True
+    context_visibility: str = "silent"
+    context_ambiguity_confirmation: bool = True
+    context_curator: str = "async"
 
 
 def merge_configs(base: dict, override: dict) -> dict:

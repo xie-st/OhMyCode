@@ -151,3 +151,55 @@ Under each root: either `<skill>/SKILL.md` or one nested level `<group>/<skill>/
 load_config(cli_overrides) -> OhMyCodeConfig
 merge_configs(base, override) -> dict  # scalars overridden, arrays concatenated, objects deep-merged
 ```
+
+## context/runtime.py
+
+`ContextRuntime` is owned by the REPL, not by `ConversationLoop`. It records append-only events, chooses the active topic, returns a cached `ContextPacket`, and schedules coalesced curator/compression tasks.
+
+```python
+runtime = ContextRuntime.for_cwd(cwd)
+event_id = runtime.record_user_message(expanded_input)
+prepared = runtime.prepare_for_turn(expanded_input, base_system_prompt, event_id)
+system_prompt = apply_context_projection(conv, runtime, prepared, base_system_prompt)
+await render_stream(conv, system_prompt_override=system_prompt)
+```
+
+Important methods:
+
+- `record_user_message()` / `record_assistant_message()` / `record_tool_call()` / `record_tool_result()` / `record_turn_complete()` append durable timeline events.
+- `prepare_for_turn()` returns `PreparedContext(system_prompt, packet, route)`.
+- `request_curator_run()` coalesces concurrent requests and re-runs once if work arrived while the previous curator pass was active.
+- `request_topic_compression()` does the same per topic for lazy compression caches.
+- `switch_topic()` backs `/context switch <topic_id>` and records a `context_correction` event.
+
+## context/packet.py
+
+`ContextPacket` is the foreground agent's compact working memory. `render(max_chars=24000)` prioritizes active topic summary, decisions, open questions, next actions, and related files before lower-priority related topics and global memory.
+
+## context/store.py
+
+JSONL + SQLite persistence for long-term context:
+
+- `events/YYYY-MM-DD.jsonl`: append-only source timeline (`user_message`, `assistant_message`, `tool_call`, `tool_result`, `turn_complete`, `context_correction`)
+- `event_index`: maps global event ids to daily JSONL shards
+- `topics`: invisible topic workspaces
+- `topic_slices`: topic-owned transcript ranges over the event log
+- `context_packets`: cached rendered packet source data
+- `topic_compression_cache`: derived compressed messages plus `compressed_until_event_id`
+- `curator_state`: active topic and curator processed-event marker
+
+## context/curator.py
+
+`ContextCurator` reads events after `last_processed_event_id`, calls a curator function, parses compact JSON, and applies topic/packet/slice patches. `build_provider_curate_fn(provider, model)` creates a provider-backed curator function using `stream_to_text()`.
+
+## context/projection.py
+
+`build_topic_projection()` reconstructs the virtual topic window sent to the foreground model. Active topic slices become real `Message` objects; related topic packets are rendered into the system prompt but their transcripts are not injected by default. If a topic compression cache exists, projection uses cached compressed messages plus raw events after `compressed_until_event_id`.
+
+## context/compression.py
+
+`TopicCompressor.compress_if_needed()` checks one topic transcript against its effective context budget and writes a derived compression cache when usage crosses the threshold. It never rewrites JSONL source events.
+
+## core/loop.py per-turn system prompt
+
+`ConversationLoop.run_turn(system_prompt_override=None)` uses the override for both compression accounting and `provider.stream(system=...)`. `_system_prompt` remains the base prompt built during initialization for backwards compatibility and `/status`.
