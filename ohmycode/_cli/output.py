@@ -12,6 +12,8 @@ from rich.markup import escape
 
 from ohmycode.core.loop import ConversationLoop
 from ohmycode.core.messages import (
+    SubAgentDone,
+    SubAgentToolUse,
     TextChunk,
     ThinkingChunk,
     ToolCallStreaming,
@@ -184,6 +186,7 @@ async def render_stream(conv: ConversationLoop) -> str:
     spinner_task = asyncio.create_task(_spinner_task("Waiting...", t_start))
     tool_spinner_task: asyncio.Task | None = None
     box = ThinkingBox()
+    sub_agent_box: SubAgentBox | None = None
 
     try:
         async for event in conv.run_turn():
@@ -193,6 +196,22 @@ async def render_stream(conv: ConversationLoop) -> str:
                 if conv.think:
                     sys.stdout.write("\n")
                     sys.stdout.flush()
+
+            if isinstance(event, SubAgentToolUse):
+                if _is_interactive():
+                    if sub_agent_box is None:
+                        sub_agent_box = SubAgentBox()
+                    sub_agent_box.push_tool(event.tool_name)
+                continue
+
+            if isinstance(event, SubAgentDone):
+                if sub_agent_box is not None:
+                    if event.is_error:
+                        sub_agent_box.clear()
+                    else:
+                        sub_agent_box.finish()
+                    sub_agent_box = None
+                continue
 
             if isinstance(event, ToolCallStreaming):
                 if tool_spinner_task is None or tool_spinner_task.done():

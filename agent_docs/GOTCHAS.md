@@ -79,6 +79,10 @@ Fix: pass `config=self.config` when building the root `ToolContext` in `Conversa
 
 `AgentTool.concurrent_safe = False` keeps sub-agents serial. If it were set to `True`, two `SubAgentBox` instances running concurrently would both issue `\033[{N}A\033[J` cursor-up/erase sequences against the same `sys.stdout`, corrupting each other's display. Fix before enabling parallelism: gate all `_draw()` / `clear()` calls behind a shared `asyncio.Lock`, or render both boxes as a single combined frame.
 
+## 17. Sub-agent progress events are buffered, not real-time
+
+`AgentTool.execute()` does not import `_cli/*`; instead it pushes `SubAgentToolUse` and `SubAgentDone` events through `ToolContext.event_emitter`, which `core/loop.py` wires to a buffer list. The loop flushes the buffer right before yielding `ToolCallResult` for the agent call. Consequence: the `SubAgentBox` panel materializes only after the sub-agent finishes — it does not stream live tool-by-tool. This is the cost of keeping `tools/agent.py` decoupled from the renderer; lifting it would require an `asyncio.Queue` consumer task running concurrently with `run_tool_calls`.
+
 ## 14. ThinkingChunk event passthrough requires explicit handling in loop.py
 
 `run_turn()` uses explicit `isinstance` branches to decide what to do with each provider event. Unknown event types are **silently dropped** — they do not pass through automatically. When adding a new event type (e.g. `ThinkingChunk`), you must add a corresponding `elif isinstance(event, ThinkingChunk): yield event` branch in `run_turn()`, otherwise it never reaches the CLI.

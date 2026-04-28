@@ -1,8 +1,15 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 from ohmycode.tools.base import ToolContext
 from ohmycode.tools.agent import AgentTool, MAX_AGENT_DEPTH
-from ohmycode.core.messages import TextChunk, ToolCallStart, TurnComplete, TokenUsage
+from ohmycode.core.messages import (
+    SubAgentDone,
+    SubAgentToolUse,
+    TextChunk,
+    ToolCallStart,
+    TurnComplete,
+    TokenUsage,
+)
 
 
 @pytest.fixture
@@ -12,7 +19,7 @@ def ctx(tmp_path):
 
 @pytest.mark.asyncio
 async def test_agent_depth_limit(ctx):
-    """Test that agent respects depth limit."""
+    """AgentTool refuses to spawn past MAX_AGENT_DEPTH."""
     tool = AgentTool()
     ctx.agent_depth = MAX_AGENT_DEPTH
     result = await tool.execute({"prompt": "test"}, ctx)
@@ -22,7 +29,7 @@ async def test_agent_depth_limit(ctx):
 
 @pytest.mark.asyncio
 async def test_agent_properties(ctx):
-    """Test that AgentTool has correct properties."""
+    """AgentTool exposes expected name, schema, and serial-execution flag."""
     tool = AgentTool()
     assert tool.name == "agent"
     assert tool.concurrent_safe is False
@@ -30,12 +37,11 @@ async def test_agent_properties(ctx):
 
 
 # ---------------------------------------------------------------------------
-# SubAgentBox integration
+# Event emission via ctx.event_emitter
 # ---------------------------------------------------------------------------
 
 
 def _fake_run_turn(*events):
-    """Return an async generator that yields the given events."""
     async def _gen():
         for e in events:
             yield e
@@ -43,89 +49,45 @@ def _fake_run_turn(*events):
 
 
 @pytest.mark.asyncio
-async def test_push_tool_called_for_each_tool_call_start(ctx, tmp_path):
-    """push_tool() is called once per ToolCallStart from the sub-loop."""
-    push_calls = []
+async def test_emits_sub_agent_tool_use_per_tool_call(ctx):
+    """One SubAgentToolUse event per ToolCallStart from the inner sub-loop."""
+    events_seen: list = []
+    ctx.event_emitter = events_seen.append
 
-    class FakeBox:
-        visible = False
-        def push_tool(self, name): push_calls.append(name)
-        def finish(self): pass
-        def clear(self): pass
-
-    fake_box = FakeBox()
-    events = [
+    inner_events = [
         ToolCallStart(tool_name="bash", tool_use_id="id1", params={}),
         ToolCallStart(tool_name="read", tool_use_id="id2", params={}),
         TextChunk(text="result"),
         TurnComplete(finish_reason="stop", usage=TokenUsage(10, 5, 15)),
     ]
 
-    with patch("ohmycode._cli.output._is_interactive", return_value=True), \
-         patch("ohmycode._cli.output.SubAgentBox", return_value=fake_box), \
-         patch("ohmycode.core.loop.ConversationLoop") as MockLoop:
+    with patch("ohmycode.core.loop.ConversationLoop") as MockLoop:
         inst = MockLoop.return_value
-        inst.run_turn = _fake_run_turn(*events)
+        inst.run_turn = _fake_run_turn(*inner_events)
         inst.initialize = lambda: None
         inst.add_user_message = lambda p: None
 
         result = await AgentTool().execute({"prompt": "hello"}, ctx)
 
-    assert push_calls == ["bash", "read"]
+    tool_uses = [e for e in events_seen if isinstance(e, SubAgentToolUse)]
+    dones = [e for e in events_seen if isinstance(e, SubAgentDone)]
+    assert [e.tool_name for e in tool_uses] == ["bash", "read"]
+    assert len(dones) == 1 and dones[0].is_error is False
     assert result.output == "result"
     assert not result.is_error
 
 
 @pytest.mark.asyncio
-async def test_finish_called_on_success(ctx, tmp_path):
-    """box.finish() is called when the sub-agent completes normally."""
-    finish_called = []
-    clear_called = []
-
-    class FakeBox:
-        visible = False
-        def push_tool(self, name): pass
-        def finish(self): finish_called.append(True)
-        def clear(self): clear_called.append(True)
-
-    events = [
-        TextChunk(text="ok"),
-        TurnComplete(finish_reason="stop", usage=TokenUsage(0, 0, 0)),
-    ]
-
-    with patch("ohmycode._cli.output._is_interactive", return_value=True), \
-         patch("ohmycode._cli.output.SubAgentBox", return_value=FakeBox()), \
-         patch("ohmycode.core.loop.ConversationLoop") as MockLoop:
-        inst = MockLoop.return_value
-        inst.run_turn = _fake_run_turn(*events)
-        inst.initialize = lambda: None
-        inst.add_user_message = lambda p: None
-
-        await AgentTool().execute({"prompt": "q"}, ctx)
-
-    assert finish_called, "finish() must be called on normal completion"
-    assert not clear_called, "clear() must NOT be called on normal completion"
-
-
-@pytest.mark.asyncio
-async def test_clear_called_on_exception(ctx, tmp_path):
-    """box.clear() is called (not finish) when the sub-loop raises."""
-    finish_called = []
-    clear_called = []
-
-    class FakeBox:
-        visible = True
-        def push_tool(self, name): pass
-        def finish(self): finish_called.append(True)
-        def clear(self): clear_called.append(True)
+async def test_emits_sub_agent_done_with_is_error_on_failure(ctx):
+    """SubAgentDone(is_error=True) when the sub-loop raises."""
+    events_seen: list = []
+    ctx.event_emitter = events_seen.append
 
     async def failing_run_turn():
         raise RuntimeError("provider error")
         yield  # make it an async generator
 
-    with patch("ohmycode._cli.output._is_interactive", return_value=True), \
-         patch("ohmycode._cli.output.SubAgentBox", return_value=FakeBox()), \
-         patch("ohmycode.core.loop.ConversationLoop") as MockLoop:
+    with patch("ohmycode.core.loop.ConversationLoop") as MockLoop:
         inst = MockLoop.return_value
         inst.run_turn = failing_run_turn
         inst.initialize = lambda: None
@@ -133,67 +95,71 @@ async def test_clear_called_on_exception(ctx, tmp_path):
 
         result = await AgentTool().execute({"prompt": "x"}, ctx)
 
+    dones = [e for e in events_seen if isinstance(e, SubAgentDone)]
     assert result.is_error
-    assert clear_called, "clear() must be called when sub-agent errors"
-    assert not finish_called, "finish() must NOT be called on error"
+    assert len(dones) == 1 and dones[0].is_error is True
 
 
 @pytest.mark.asyncio
-async def test_no_box_when_not_interactive(ctx, tmp_path):
-    """SubAgentBox is not instantiated when stdout is not a TTY."""
-    box_created = []
+async def test_silent_when_emitter_is_none(ctx):
+    """No emitter wired = no crash; tool still runs and returns output."""
+    ctx.event_emitter = None  # default; explicit for clarity
 
-    class TrackingBox:
-        visible = False
-        def __init__(self): box_created.append(self)
-        def push_tool(self, name): pass
-        def finish(self): pass
-        def clear(self): pass
-
-    events = [
-        TextChunk(text="done"),
+    inner_events = [
+        ToolCallStart(tool_name="bash", tool_use_id="id1", params={}),
+        TextChunk(text="ok"),
         TurnComplete(finish_reason="stop", usage=TokenUsage(0, 0, 0)),
     ]
 
-    with patch("ohmycode._cli.output._is_interactive", return_value=False), \
-         patch("ohmycode._cli.output.SubAgentBox", TrackingBox), \
-         patch("ohmycode.core.loop.ConversationLoop") as MockLoop:
+    with patch("ohmycode.core.loop.ConversationLoop") as MockLoop:
         inst = MockLoop.return_value
-        inst.run_turn = _fake_run_turn(*events)
+        inst.run_turn = _fake_run_turn(*inner_events)
         inst.initialize = lambda: None
         inst.add_user_message = lambda p: None
 
-        await AgentTool().execute({"prompt": "q"}, ctx)
+        result = await AgentTool().execute({"prompt": "q"}, ctx)
 
-    assert not box_created, "SubAgentBox must not be created when not interactive"
+    assert result.output == "ok"
+    assert not result.is_error
 
 
 @pytest.mark.asyncio
-async def test_no_box_for_nested_agent(ctx, tmp_path):
-    """SubAgentBox is not created when agent_depth > 0 (nested sub-agent)."""
-    ctx.agent_depth = 1
-    box_created = []
+async def test_emitter_exception_does_not_break_tool(ctx):
+    """A misbehaving emitter callback must not propagate out of execute()."""
+    def boom(_event):
+        raise ValueError("emitter blew up")
+    ctx.event_emitter = boom
 
-    class TrackingBox:
-        visible = False
-        def __init__(self): box_created.append(self)
-        def push_tool(self, name): pass
-        def finish(self): pass
-        def clear(self): pass
-
-    events = [
-        TextChunk(text="nested"),
+    inner_events = [
+        ToolCallStart(tool_name="bash", tool_use_id="id1", params={}),
+        TextChunk(text="ok"),
         TurnComplete(finish_reason="stop", usage=TokenUsage(0, 0, 0)),
     ]
 
-    with patch("ohmycode._cli.output._is_interactive", return_value=True), \
-         patch("ohmycode._cli.output.SubAgentBox", TrackingBox), \
-         patch("ohmycode.core.loop.ConversationLoop") as MockLoop:
+    with patch("ohmycode.core.loop.ConversationLoop") as MockLoop:
         inst = MockLoop.return_value
-        inst.run_turn = _fake_run_turn(*events)
+        inst.run_turn = _fake_run_turn(*inner_events)
         inst.initialize = lambda: None
         inst.add_user_message = lambda p: None
 
-        await AgentTool().execute({"prompt": "nested"}, ctx)
+        result = await AgentTool().execute({"prompt": "q"}, ctx)
 
-    assert not box_created, "SubAgentBox must not be created inside a nested sub-agent"
+    assert result.output == "ok"
+    assert not result.is_error
+
+
+def test_no_imports_from_cli_layer():
+    """Sanity check: tools.agent must not import _cli.* (orthogonality)."""
+    import ast
+    import inspect
+    from ohmycode.tools import agent as agent_mod
+
+    tree = ast.parse(inspect.getsource(agent_mod))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert "_cli" not in alias.name, f"forbidden import: {alias.name}"
+        elif isinstance(node, ast.ImportFrom):
+            assert node.module is None or "_cli" not in node.module, (
+                f"forbidden import: from {node.module}"
+            )

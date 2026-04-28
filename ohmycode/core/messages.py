@@ -165,5 +165,28 @@ class TurnComplete:
     usage: TokenUsage
 
 
+@dataclass
+class SubAgentToolUse:
+    """A tool was invoked inside a sub-agent. The renderer can show it in a panel."""
+
+    tool_name: str
+
+
+@dataclass
+class SubAgentDone:
+    """A sub-agent finished (`is_error=True` if it raised)."""
+
+    is_error: bool
+
+
 # Union of all events the loop may yield
-StreamEvent = Union[TextChunk, ThinkingChunk, ToolCallStreaming, ToolCallStart, ToolCallResult, TurnComplete]
+StreamEvent = Union[
+    TextChunk,
+    ThinkingChunk,
+    ToolCallStreaming,
+    ToolCallStart,
+    ToolCallResult,
+    TurnComplete,
+    SubAgentToolUse,
+    SubAgentDone,
+]

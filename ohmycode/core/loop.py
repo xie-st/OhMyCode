@@ -155,13 +155,18 @@ class ConversationLoop:
 
         tool_defs = get_tool_defs()
 
-        # Prepare tool execution context
+        # Tools (e.g. AgentTool) push StreamEvents into this buffer; the loop
+        # flushes them out alongside ToolCallResult so the renderer can show
+        # sub-agent progress without tools knowing about the UI layer.
+        sub_event_buffer: list[StreamEvent] = []
+
         ctx = ToolContext(
             mode=self.config.mode,
             agent_depth=0,
             cwd=os.getcwd(),
             is_sub_agent=False,
             config=self.config,
+            event_emitter=sub_event_buffer.append,
         )
 
         # Latest usage (updated after each provider call)
@@ -337,6 +342,11 @@ class ConversationLoop:
                 # ── Execute permitted tool calls ───────────────────────────────
                 if permitted_calls:
                     results = await run_tool_calls(permitted_calls, ctx)
+
+                    # Flush any sub-agent events that tools pushed during execution.
+                    while sub_event_buffer:
+                        yield sub_event_buffer.pop(0)
+
                     for call in permitted_calls:
                         tid = call["tool_use_id"]
                         tool_result = results[tid]
