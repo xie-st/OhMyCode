@@ -14,6 +14,7 @@ from ohmycode.core.compression import (
     get_compression_strategy,
 )
 from ohmycode.core.context import ContextManager
+from ohmycode.core.events import EventBus
 from ohmycode.core.messages import (
     AssistantMessage,
     ImageBlock,
@@ -82,6 +83,14 @@ class ConversationLoop:
                 output_reserved=config.output_tokens_reserved,
             )
         )
+        # Optional fan-out for renderers/observers. The loop never *requires*
+        # a bus — the iterator returned by ``run_turn`` remains the canonical
+        # event source. When set, every yielded event is also published.
+        self.event_bus: EventBus | None = None
+
+    def set_event_bus(self, bus: EventBus | None) -> None:
+        """Attach an EventBus (or detach by passing None)."""
+        self.event_bus = bus
 
     # ── Setup ────────────────────────────────────────────────────────────────
 
@@ -138,6 +147,7 @@ class ConversationLoop:
             memory_content=memory_content,
             memory_dir=mem_dir,
             system_prompt_append=self.config.system_prompt_append,
+            sections=self.config.system_prompt_sections,
         )
 
     def add_user_message(
@@ -186,6 +196,25 @@ class ConversationLoop:
         }
 
     # ── Main loop ────────────────────────────────────────────────────────────
+
+    async def stream_turn(
+        self,
+        system_prompt_override: str | None = None,
+        allow_blocking_compression: bool = True,
+    ) -> AsyncIterator[StreamEvent]:
+        """``run_turn`` plus event-bus fan-out (additive, not a replacement).
+
+        Yields the same events as ``run_turn`` so callers that prefer the
+        iterator path keep working; if ``self.event_bus`` is set, every
+        event is also published there for any subscribed renderer.
+        """
+        async for event in self.run_turn(
+            system_prompt_override=system_prompt_override,
+            allow_blocking_compression=allow_blocking_compression,
+        ):
+            if self.event_bus is not None:
+                await self.event_bus.publish(event)
+            yield event
 
     async def run_turn(
         self,

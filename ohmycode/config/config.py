@@ -32,6 +32,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "context_curator": "async",
     "memory_backend": "btree",
     "compression_strategy": "tiered",
+    "system_prompt_sections": None,
 }
 
 
@@ -59,6 +60,7 @@ class OhMyCodeConfig(BaseModel):
     context_curator: str = "async"
     memory_backend: str = "btree"
     compression_strategy: str = "tiered"
+    system_prompt_sections: list[str] | None = None
 
 
 def merge_configs(base: dict, override: dict) -> dict:

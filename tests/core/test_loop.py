@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from ohmycode.config.config import OhMyCodeConfig
+from ohmycode.core.events import EventBus
 from ohmycode.core.loop import ConversationLoop
 from ohmycode.core.messages import TextChunk, TurnComplete
 from ohmycode.providers.base import register_provider
@@ -149,3 +150,60 @@ async def test_run_turn_can_disable_blocking_compression():
 
     assert conv._compression.allow_llm_values == [False]
     assert any(isinstance(e, TurnComplete) for e in events)
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_publishes_each_event_to_bus():
+    """stream_turn yields the same events AND publishes them on the bus."""
+
+    class SimpleProvider:
+        name = "simple"
+
+        async def stream(self, messages, tools, system, model, **kwargs):
+            yield TextChunk(text="hello")
+            yield TurnComplete(finish_reason="stop", usage=None)
+
+    config = OhMyCodeConfig(provider="mock", model="test", mode="auto", api_key="x")
+    conv = ConversationLoop(config=config)
+    conv._provider = SimpleProvider()
+    conv._system_prompt = "base"
+    conv.add_user_message("Hi")
+
+    bus = EventBus()
+    bus_seen: list = []
+    bus.subscribe(lambda e: bus_seen.append(type(e).__name__))
+    conv.set_event_bus(bus)
+
+    iterator_seen = [type(e).__name__ async for e in conv.stream_turn()]
+
+    # Whatever the iterator yields must also reach the bus, in the same order.
+    assert iterator_seen == bus_seen
+    assert "TextChunk" in iterator_seen
+    assert "TurnComplete" in iterator_seen
+
+
+@pytest.mark.asyncio
+async def test_run_turn_does_not_publish_when_bus_attached():
+    """run_turn is the kernel-only path; it should not publish on its own."""
+
+    class SimpleProvider:
+        name = "simple"
+
+        async def stream(self, messages, tools, system, model, **kwargs):
+            yield TextChunk(text="hi")
+            yield TurnComplete(finish_reason="stop", usage=None)
+
+    config = OhMyCodeConfig(provider="mock", model="test", mode="auto", api_key="x")
+    conv = ConversationLoop(config=config)
+    conv._provider = SimpleProvider()
+    conv._system_prompt = "base"
+    conv.add_user_message("Hi")
+
+    bus = EventBus()
+    seen: list = []
+    bus.subscribe(lambda e: seen.append(e))
+    conv.set_event_bus(bus)
+
+    # Use the iterator-only path
+    _ = [e async for e in conv.run_turn()]
+    assert seen == []
