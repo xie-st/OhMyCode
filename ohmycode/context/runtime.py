@@ -222,17 +222,13 @@ class ContextRuntime:
         if route.action == "new_topic":
             topic_id = self.store.create_topic(_title_from_text(user_text), summary=user_text)
             self.store.set_state("active_topic_id", topic_id)
-            packet = self._new_packet_from_topic(topic_id, last_event_id)
+            packet = self._new_packet_from_topic(topic_id)
             self.store.save_packet(packet)
             return packet
         topic_id = route.topic_id or self.store.get_state("active_topic_id", "")
         if route.action in ("switch", "patch"):
             self.store.set_state("active_topic_id", topic_id)
         packet = self.store.load_packet(topic_id) or self._new_packet_from_topic(topic_id)
-        if route.action == "patch":
-            packet.version += 1
-            packet.last_event_id = last_event_id
-            self.store.save_packet(packet)
         return packet
 
     def _new_packet_from_topic(self, topic_id: str, last_event_id: int = 0) -> ContextPacket:

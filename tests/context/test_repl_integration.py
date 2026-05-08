@@ -53,6 +53,46 @@ async def test_context_command_shows_active_packet(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_context_command_shows_freshness_watermarks(tmp_path):
+    runtime = _runtime(tmp_path)
+    runtime.store.append_event("user_message", "first")
+    runtime.store.append_event("assistant_message", "second")
+    topic_id = runtime.store.create_topic("agent runtime", summary="one window")
+    runtime.store.set_state("active_topic_id", topic_id)
+    runtime.store.set_last_processed_event_id(1)
+    runtime.store.save_packet(
+        ContextPacket(
+            topic_id=topic_id,
+            title="agent runtime",
+            summary="one window",
+            version=3,
+            last_event_id=1,
+        )
+    )
+    prints = []
+
+    await handle_slash_command(
+        cmd="/context",
+        parts=["/context"],
+        raw_input="/context",
+        conv=_conv(),
+        config=OhMyCodeConfig(),
+        config_overrides={},
+        skills={},
+        resumed_filename=None,
+        repl_print=lambda *args, **kwargs: prints.append(" ".join(str(a) for a in args)),
+        context_runtime=runtime,
+    )
+
+    output = "\n".join(prints).lower()
+    assert "packet semantic version" in output
+    assert "packet curated through event" in output
+    assert "curator processed through event" in output
+    assert "latest event" in output
+    assert "lag" in output
+
+
+@pytest.mark.asyncio
 async def test_context_switch_records_correction_event(tmp_path):
     runtime = _runtime(tmp_path)
     runtime.store.create_topic("first", summary="old")

@@ -9,7 +9,7 @@ from ohmycode.context.projection import (
     messages_to_json,
 )
 from ohmycode.context.store import ContextStore
-from ohmycode.core.messages import AssistantMessage, UserMessage
+from ohmycode.core.messages import AssistantMessage, ToolResultMessage, UserMessage
 
 
 def _store(tmp_path: Path) -> ContextStore:
@@ -67,6 +67,45 @@ def test_projection_uses_compressed_history_plus_raw_tail(tmp_path):
     assert [m.content for m in projection.messages] == ["compressed old", "new raw"]
     assert projection.compressed_until_event_id == first
     assert projection.raw_tail_event_count == 1
+
+
+def test_projection_extends_slices_to_complete_tool_results(tmp_path):
+    store = _store(tmp_path)
+    topic_id = store.create_topic("tool topic", summary="tools")
+    store.save_packet(ContextPacket(topic_id=topic_id, title="tool topic", summary="tools"))
+    user_event = store.append_event("user_message", "inspect db")
+    assistant_event = store.append_event(
+        "assistant_message",
+        "",
+        {
+            "tool_calls": [
+                {
+                    "tool_use_id": "bash:53",
+                    "tool_name": "bash",
+                    "params": {"command": "sqlite3 context.db"},
+                }
+            ]
+        },
+    )
+    store.append_event(
+        "tool_call",
+        '{"tool_use_id": "bash:53", "params": {"command": "sqlite3 context.db"}}',
+        {"tool_name": "bash"},
+    )
+    store.append_event(
+        "tool_result",
+        "rows",
+        {"tool_use_id": "bash:53", "is_error": False},
+    )
+    store.save_topic_slices(topic_id, [(user_event, assistant_event)])
+
+    projection = build_topic_projection(store, "base", topic_id)
+
+    assert len(projection.messages) == 3
+    assert isinstance(projection.messages[1], AssistantMessage)
+    assert projection.messages[1].tool_calls[0].tool_use_id == "bash:53"
+    assert isinstance(projection.messages[2], ToolResultMessage)
+    assert projection.messages[2].tool_use_id == "bash:53"
 
 
 def test_message_json_round_trips_text_messages():

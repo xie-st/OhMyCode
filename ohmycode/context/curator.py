@@ -66,11 +66,12 @@ class ContextCurator:
         except json.JSONDecodeError:
             return CuratorResult(applied=False, reason="invalid_json")
 
-        self._apply(data)
-        self.store.set_last_processed_event_id(events[-1].id)
+        processed_event_id = events[-1].id
+        self._apply(data, processed_event_id)
+        self.store.set_last_processed_event_id(processed_event_id)
         return CuratorResult(applied=True)
 
-    def _apply(self, data: dict) -> None:
+    def _apply(self, data: dict, processed_event_id: int) -> None:
         topic_data = data.get("topic") or {}
         topic_id = topic_data.get("id") or self.store.get_state("active_topic_id", "")
         if topic_id:
@@ -87,10 +88,21 @@ class ContextCurator:
         packet = self.store.load_packet(topic_id)
         topic = self.store.get_topic(topic_id)
         if packet is None and topic is not None:
-            packet = ContextPacket(topic_id=topic.id, title=topic.title, summary=topic.summary)
+            packet = ContextPacket(
+                topic_id=topic.id,
+                title=topic.title,
+                summary=topic.summary,
+                status=topic.status,
+            )
         if packet is None:
             return
 
+        semantic_changed = False
+        for field in ("title", "status"):
+            if field in topic_data:
+                semantic_changed |= _set_if_changed(packet, field, topic_data[field])
+        if "summary" in topic_data and "summary" not in patch:
+            semantic_changed |= _set_if_changed(packet, "summary", topic_data["summary"])
         for field in (
             "decisions",
             "open_questions",
@@ -100,10 +112,12 @@ class ContextCurator:
             "global_memory",
         ):
             if field in patch:
-                setattr(packet, field, list(patch[field]))
+                semantic_changed |= _set_if_changed(packet, field, list(patch[field]))
         if "summary" in patch:
-            packet.summary = patch["summary"]
-        packet.version += 1
+            semantic_changed |= _set_if_changed(packet, "summary", patch["summary"])
+        if semantic_changed:
+            packet.version += 1
+        packet.last_event_id = processed_event_id
         self.store.save_packet(packet)
 
         slices_by_topic: dict[str, list[tuple[int, int]]] = {}
@@ -118,6 +132,13 @@ class ContextCurator:
                 self.store.save_topic_slices(slice_topic_id, ranges)
             else:
                 self.store.merge_topic_slices(slice_topic_id, ranges)
+
+
+def _set_if_changed(packet: ContextPacket, field: str, value: object) -> bool:
+    if getattr(packet, field) == value:
+        return False
+    setattr(packet, field, value)
+    return True
 
 
 def build_provider_curate_fn(provider, model: str) -> CurateFn:

@@ -277,10 +277,19 @@ def _handle_context_command(
     if not arg:
         packet = context_runtime.get_active_packet()
         active = packet.topic_id or "(none)"
+        processed_event_id = context_runtime.store.get_last_processed_event_id()
+        latest_event_id = context_runtime.store.get_max_event_id()
+        curator_lag = max(0, latest_event_id - processed_event_id)
         repl_print()
         repl_print("  [bold]Long-term context[/]")
         repl_print(f"    [dim]Active topic:[/] {active}")
-        repl_print(f"    [dim]Packet version:[/] {packet.version}")
+        repl_print(f"    [dim]Packet semantic version:[/] {packet.version}")
+        repl_print(f"    [dim]Packet curated through event:[/] {packet.last_event_id}")
+        repl_print(f"    [dim]Curator processed through event:[/] {processed_event_id}")
+        repl_print(
+            f"    [dim]Latest event:[/] {latest_event_id}    "
+            f"[dim]Curator lag:[/] {curator_lag}"
+        )
         repl_print(
             "    [dim]Curator:[/] "
             + ("running" if context_runtime.curator_running else "idle")

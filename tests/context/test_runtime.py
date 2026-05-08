@@ -48,6 +48,25 @@ def test_runtime_keeps_active_packet_for_related_message():
     assert second.packet.version >= first.packet.version
 
 
+def test_runtime_patch_does_not_bump_semantic_version_or_curated_watermark():
+    runtime = _runtime("runtime_patch_no_freshness")
+    first_event = runtime.record_user_message("Let's design the context runtime")
+    first = runtime.prepare_for_turn("Let's design the context runtime", "base", first_event)
+    second_event = runtime.record_user_message("How should the context packet cache work?")
+
+    second = runtime.prepare_for_turn(
+        "How should the context packet cache work?",
+        "base",
+        second_event,
+    )
+
+    assert second.route.action in ("keep", "patch")
+    assert second.packet.topic_id == first.packet.topic_id
+    assert second.packet.version == first.packet.version
+    assert first.packet.last_event_id == 0
+    assert second.packet.last_event_id == 0
+
+
 def test_runtime_switches_to_existing_topic_when_query_matches_it():
     runtime = _runtime("runtime_switch")
     runtime.store.create_topic("agent runtime", summary="single-window context")

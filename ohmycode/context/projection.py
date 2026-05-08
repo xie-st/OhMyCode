@@ -109,10 +109,38 @@ def _topic_events(
     after_event_id: int = 0,
 ) -> list[ContextEvent]:
     events: list[ContextEvent] = []
+    seen_ids: set[int] = set()
     for topic_slice in store.list_topic_slices(topic_id):
         start = max(topic_slice.start_event_id, after_event_id + 1)
         if start <= topic_slice.end_event_id:
-            events.extend(store.list_events_range(start, topic_slice.end_event_id))
+            chunk = store.list_events_range(start, topic_slice.end_event_id)
+            chunk = _extend_events_for_tool_results(store, chunk, topic_slice.end_event_id)
+            for event in chunk:
+                if event.id > after_event_id and event.id not in seen_ids:
+                    events.append(event)
+                    seen_ids.add(event.id)
+    return sorted(events, key=lambda event: event.id)
+
+
+def _extend_events_for_tool_results(
+    store: ContextStore,
+    events: list[ContextEvent],
+    end_event_id: int,
+) -> list[ContextEvent]:
+    pending = _pending_tool_ids(events)
+    next_event_id = end_event_id + 1
+    max_event_id = store.get_max_event_id()
+    while pending and next_event_id <= max_event_id:
+        next_events = store.list_events_range(next_event_id, next_event_id)
+        if not next_events:
+            break
+        event = next_events[0]
+        if event.event_type not in ("tool_call", "tool_result"):
+            break
+        events.append(event)
+        if event.event_type == "tool_result":
+            pending.discard(event.metadata.get("tool_use_id", ""))
+        next_event_id += 1
     return events
 
 
@@ -121,8 +149,10 @@ def _messages_from_events(events: list[ContextEvent]) -> list[Message]:
     open_tool_ids: set[str] = set()
     for event in events:
         if event.event_type == "user_message":
+            _append_missing_tool_results(messages, open_tool_ids)
             messages.append(UserMessage(event.content))
         elif event.event_type == "assistant_message":
+            _append_missing_tool_results(messages, open_tool_ids)
             tool_calls = _tool_calls_from_json(event.metadata.get("tool_calls") or [])
             open_tool_ids.update(tc.tool_use_id for tc in tool_calls)
             messages.append(AssistantMessage(event.content, tool_calls=tool_calls))
@@ -135,7 +165,33 @@ def _messages_from_events(events: list[ContextEvent]) -> list[Message]:
                     bool(event.metadata.get("is_error", False)),
                 ))
                 open_tool_ids.discard(tool_use_id)
+    _append_missing_tool_results(messages, open_tool_ids)
     return messages
+
+
+def _pending_tool_ids(events: list[ContextEvent]) -> set[str]:
+    pending: set[str] = set()
+    for event in events:
+        if event.event_type == "assistant_message":
+            pending.update(
+                tc.tool_use_id
+                for tc in _tool_calls_from_json(event.metadata.get("tool_calls") or [])
+            )
+        elif event.event_type == "tool_result":
+            pending.discard(event.metadata.get("tool_use_id", ""))
+    return pending
+
+
+def _append_missing_tool_results(messages: list[Message], open_tool_ids: set[str]) -> None:
+    for tool_use_id in sorted(open_tool_ids):
+        messages.append(
+            ToolResultMessage(
+                tool_use_id,
+                "Tool result omitted from transcript projection.",
+                is_error=True,
+            )
+        )
+    open_tool_ids.clear()
 
 
 def _render_system_prompt(

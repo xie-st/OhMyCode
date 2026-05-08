@@ -177,6 +177,7 @@ Important methods:
 
 - `record_user_message()` / `record_assistant_message()` / `record_tool_call()` / `record_tool_result()` / `record_turn_complete()` append durable timeline events. User/tool events keep canonical `content` plus `metadata.audit` for raw input, image hashes, and replayable tool payloads.
 - `prepare_for_turn()` returns `PreparedContext(system_prompt, packet, route)`. Routing is local and deterministic: Latin tokens plus CJK n-grams scored against topic title, summary, and packet text. It is not an embedding or LLM router.
+- `prepare_for_turn()` must not bump `ContextPacket.version` or `last_event_id` for an ordinary foreground turn. Those are curator-derived freshness signals, not proof that the current user event has been summarized.
 - `request_curator_run()` coalesces concurrent requests and re-runs once if work arrived while the previous curator pass was active.
 - `request_topic_compression()` does the same per topic for lazy compression caches.
 - `switch_topic()` backs `/context switch <topic_id>` and records a `context_correction` event.
@@ -184,6 +185,8 @@ Important methods:
 ## context/packet.py
 
 `ContextPacket` is the foreground agent's compact working memory. `render(max_chars=24000)` prioritizes active topic summary, decisions, open questions, next actions, and related files before lower-priority related topics and global memory.
+
+`ContextPacket.version` is a semantic content version: it increments only when packet content such as summary, decisions, open questions, next actions, related files/topics, or global memory actually changes. `ContextPacket.last_event_id` is the event id through which the curator has refreshed that packet. Freshness is judged by comparing packet `last_event_id`, curator `last_processed_event_id`, and the store's latest event id; packet version alone is not a freshness signal.
 
 ## context/store.py
 
@@ -203,9 +206,13 @@ JSONL + SQLite persistence for long-term context:
 
 `ContextCurator` reads events after `last_processed_event_id`, calls a curator function, parses compact JSON, and applies topic/packet/slice patches. Curator `topic_slices` default to `topic_slices_mode="merge"`; `replace` is reserved for explicit rebuilds. `build_provider_curate_fn(provider, model)` creates a provider-backed curator function using `stream_to_text()`.
 
+Every successful curator pass advances `last_processed_event_id`. Packet `last_event_id` advances to the same processed event id when a packet exists for the topic, even for a no-op `keep` result, but packet `version` increments only for actual semantic field changes. Topic-level title/summary/status patches are mirrored into the foreground packet; `packet_patch.summary` takes precedence over `topic.summary`.
+
 ## context/projection.py
 
 `build_topic_projection()` reconstructs the virtual topic window sent to the foreground model. Active topic slices become real `Message` objects; related topic packets are rendered into the system prompt but their transcripts are not injected by default. If a topic compression cache exists, projection uses cached compressed messages plus raw events after `compressed_until_event_id`.
+
+Projection must preserve provider tool-call invariants. If a topic slice ends on an assistant message with tool calls, projection extends the raw event tail through adjacent `tool_call` / `tool_result` events so the assistant message is followed by the required tool responses. If historical data is still missing a result, projection inserts an error `ToolResultMessage` placeholder before any later user/assistant message rather than sending an invalid API payload.
 
 Diagnostic rule: judge projection quality by semantic alignment, not by the mere presence of a packet. A projected context is expected to show the current project root, current active topic, relevant packet fields, and relevant topic slices. If it shows a stale topic such as an earlier setup/debugging exchange, the projection plumbing is present but routing or active-topic state needs correction.
 

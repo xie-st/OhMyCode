@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from ohmycode.context.curator import CURATOR_SYSTEM, ContextCurator, build_provider_curate_fn
+from ohmycode.context.packet import ContextPacket
 from ohmycode.core.messages import TextChunk, TokenUsage, TurnComplete
 from ohmycode.context.store import ContextStore
 
@@ -63,6 +64,101 @@ async def test_curator_applies_topic_slices():
     assert result.applied is True
     slices = store.list_topic_slices(topic_id)
     assert [(s.start_event_id, s.end_event_id) for s in slices] == [(1, 2)]
+
+
+@pytest.mark.asyncio
+async def test_curator_keep_advances_watermark_without_bumping_semantic_version():
+    store = _store("curator_keep_watermark")
+    store.append_event("user_message", "hello")
+    store.append_event("assistant_message", "hi")
+    topic_id = store.create_topic("context runtime", summary="current summary")
+    store.set_state("active_topic_id", topic_id)
+    store.save_packet(
+        ContextPacket(
+            topic_id=topic_id,
+            title="context runtime",
+            summary="current summary",
+            version=3,
+            last_event_id=0,
+        )
+    )
+
+    async def fake_curate(*args, **kwargs):
+        return json.dumps({"action": "keep", "topic": {"id": topic_id}})
+
+    result = await ContextCurator(store, fake_curate).run_once()
+    packet = store.load_packet(topic_id)
+
+    assert result.applied is True
+    assert packet.version == 3
+    assert packet.last_event_id == 2
+    assert store.get_last_processed_event_id() == 2
+
+
+@pytest.mark.asyncio
+async def test_curator_semantic_patch_bumps_version_and_advances_watermark():
+    store = _store("curator_semantic_patch")
+    store.append_event("user_message", "design async curator")
+    store.append_event("assistant_message", "use semantic versions")
+    topic_id = store.create_topic("context curator", summary="old")
+    store.set_state("active_topic_id", topic_id)
+    store.save_packet(
+        ContextPacket(
+            topic_id=topic_id,
+            title="context curator",
+            summary="old",
+            version=4,
+            last_event_id=0,
+        )
+    )
+
+    async def fake_curate(*args, **kwargs):
+        return json.dumps({
+            "action": "patch",
+            "topic": {"id": topic_id},
+            "packet_patch": {
+                "summary": "new summary",
+                "decisions": ["version means semantic content changed"],
+            },
+        })
+
+    result = await ContextCurator(store, fake_curate).run_once()
+    packet = store.load_packet(topic_id)
+
+    assert result.applied is True
+    assert packet.version == 5
+    assert packet.last_event_id == 2
+    assert packet.summary == "new summary"
+    assert packet.decisions == ["version means semantic content changed"]
+
+
+@pytest.mark.asyncio
+async def test_curator_topic_summary_updates_packet_summary():
+    store = _store("curator_topic_summary_to_packet")
+    store.append_event("user_message", "summarize topic")
+    topic_id = store.create_topic("context curator", summary="old")
+    store.set_state("active_topic_id", topic_id)
+    store.save_packet(
+        ContextPacket(
+            topic_id=topic_id,
+            title="context curator",
+            summary="old",
+            version=2,
+        )
+    )
+
+    async def fake_curate(*args, **kwargs):
+        return json.dumps({
+            "action": "patch",
+            "topic": {"id": topic_id, "summary": "topic-level summary"},
+        })
+
+    result = await ContextCurator(store, fake_curate).run_once()
+    packet = store.load_packet(topic_id)
+
+    assert result.applied is True
+    assert packet.summary == "topic-level summary"
+    assert packet.version == 3
 
 
 def test_curator_prompt_declares_topic_slices_contract():

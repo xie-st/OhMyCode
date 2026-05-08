@@ -101,6 +101,8 @@ Do not store `ContextRuntime` on `ConversationLoop`; `/mode` may replace the loo
 
 Curator slice patches are merge-by-default. Use `topic_slices_mode="replace"` only for explicit rebuilds; otherwise a small curator patch should call the merge path so older non-overlapping slices are not deleted.
 
+`ContextPacket.version` is only a semantic packet-content version. A foreground `prepare_for_turn()` may select or reuse a packet, but it must not increment version or advance packet `last_event_id`; otherwise `/context` looks fresh while summary/decisions are still old. Use packet `last_event_id`, curator `last_processed_event_id`, latest event id, and curator lag to diagnose freshness.
+
 ## 20. `/new` is short-term only when context is enabled
 
 With long-term context enabled, `/new` saves the current JSON conversation for backwards compatibility, then clears `ConversationLoop.messages` and `auto_approved`; it does not delete events, topics, packets, or the active topic. Use `/context switch <topic_id>` or `/context rebuild` to correct long-term context.
@@ -108,6 +110,8 @@ With long-term context enabled, `/new` saves the current JSON conversation for b
 ## 21. Topic projection makes `ConversationLoop.messages` a virtual window
 
 When the user continues the same topic, the REPL leaves `ConversationLoop.messages` alone and appends the new user message. When routing switches topics, `_cli/context_flow.py` replaces `ConversationLoop.messages` with the target topic's reconstructed transcript before appending the current user message. Do not assume `messages` is the global recent linear log once long-term context is enabled.
+
+Topic slices must not create invalid tool-call boundaries. OpenAI-compatible providers require every assistant message with `tool_calls` to be followed immediately by matching tool result messages. A curator slice can accidentally end at the assistant tool-call event while the `tool_result` lives just outside the slice; projection compensates by extending through adjacent tool events and adding an error placeholder only if historical data is incomplete.
 
 ## 22. JSONL events are the source of truth; compression is only a cache
 
