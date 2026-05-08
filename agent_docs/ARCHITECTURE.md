@@ -98,13 +98,13 @@ Normal REPL turns now add this pre/post layer:
 5. After the turn, assistant/tool/turn events are appended to the event log with structured audit payloads for tool calls and results.
 6. A coalesced background `ContextCurator` task updates topic summaries, packet fields, and topic slices; slice patches default to merge semantics, and lazy topic compression may then cache `compressed history + raw tail`.
 
-Long-term source events live under `~/.ohmycode/projects/<project_slug>/context/events/YYYY-MM-DD.jsonl`. `content` is the canonical model-facing event payload; `metadata.audit` preserves raw input and replay/debug details without duplicating image base64. `context.db` stores indexes and derived state: topics, packets, topic slices, compression cache, and curator state. `/new` clears only short-term `ConversationLoop.messages` when context is enabled; `/mode` creates a fresh loop for the mode but keeps the same REPL-owned context runtime.
+Long-term source events live under `~/.ohmycode/projects/<project_slug>/context/events/YYYY-MM-DD.jsonl`. `content` is the canonical model-facing event payload; `metadata.audit` preserves raw input and replay/debug details without duplicating image base64. `context.db` stores indexes and derived state: topics, packets, topic slices, compression cache, and curator state. The legacy SQLite `events` table is maintained as a mirror/fallback and is repaired from `event_index` plus JSONL when a store opens. `/new` clears only short-term `ConversationLoop.messages` when context is enabled; `/mode` creates a fresh loop for the mode but keeps the same REPL-owned context runtime.
 
 ### Healthy context projection
 
 A long-term context turn is healthy when the injected `Current Working Context` matches the task the user is actually continuing. In practice, check these fields when debugging:
 
-- `Working directory` should be the intended project root. `ContextRuntime.for_cwd(cwd)` derives the project slug from the current directory, so starting `ohmycode` from a parent folder attaches to that parent folder's long-term context, not automatically to a child repository.
+- `Working directory` should be the intended project root. `ContextRuntime.for_cwd(cwd)` derives the project slug from the current directory's git root when available, with path separators/case normalized on Windows. Starting `ohmycode` from a parent folder still attaches to that parent folder's long-term context, not automatically to a child repository.
 - `Active topic` / `topic_id` should describe the current task, not an unrelated earlier exchange.
 - `Summary`, `Decisions`, `Open Questions`, `Next Actions`, and `related_files` should mention the current implementation or investigation.
 - `Transcript Projection` should include slices from the relevant topic; `raw_tail_event_count` should correspond to recent same-topic turns.

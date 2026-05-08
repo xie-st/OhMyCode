@@ -59,6 +59,7 @@ class ContextStore:
         self.events_dir = self.db_path.parent / "events"
         self.events_dir.mkdir(parents=True, exist_ok=True)
         self._init_db()
+        self._backfill_sqlite_events_from_index()
 
     def append_event(
         self,
@@ -82,6 +83,16 @@ class ContextStore:
             conn.execute(
                 "INSERT OR REPLACE INTO event_index(event_id, shard, created_at) VALUES (?, ?, ?)",
                 (event_id, shard, created_at),
+            )
+            self._upsert_sqlite_event(
+                conn,
+                ContextEvent(
+                    id=event_id,
+                    event_type=event_type,
+                    content=content,
+                    metadata=metadata or {},
+                    created_at=created_at,
+                ),
             )
             conn.execute(
                 "INSERT OR REPLACE INTO curator_state(key, value) VALUES (?, ?)",
@@ -356,6 +367,30 @@ class ContextStore:
                 );
                 """
             )
+
+    def _backfill_sqlite_events_from_index(self) -> None:
+        rows = self._event_index_rows("1=1", (), None)
+        if not rows:
+            return
+        events = self._read_indexed_events(rows)
+        if not events:
+            return
+        with self._connect() as conn:
+            for event in events:
+                self._upsert_sqlite_event(conn, event)
+
+    def _upsert_sqlite_event(self, conn: sqlite3.Connection, event: ContextEvent) -> None:
+        conn.execute(
+            "INSERT OR REPLACE INTO events(id, type, content, metadata_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                event.id,
+                event.event_type,
+                event.content,
+                json.dumps(event.metadata or {}),
+                event.created_at,
+            ),
+        )
 
     def _next_event_id(self) -> int:
         value = self.get_state("next_event_id", "")

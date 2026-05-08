@@ -117,6 +117,8 @@ Topic slices must not create invalid tool-call boundaries. OpenAI-compatible pro
 
 Source events are written to daily `events/YYYY-MM-DD.jsonl` shards and indexed in SQLite. The event `content` field is the canonical model-facing payload, while `metadata.audit` stores raw input and replay/debug details such as image hashes and tool payloads. Topic slices and compression caches are derived state. Lazy topic compression must never rewrite or delete JSONL source events; projection combines `compressed_until_event_id` cache content with raw tail events after that watermark.
 
+The SQLite `events` table exists only as a compatibility/read fallback mirror. New appends must write both `event_index` and `events`, and `ContextStore` should backfill missing `events` rows from `event_index` + JSONL on open. If `event_index` has a higher max id than `events`, old fallback readers can look stale even while the curator appears caught up.
+
 ## 23. Long-term context foreground turns avoid blocking LLM compression
 
 When context projection is enabled, `_cli/repl.py` calls `render_stream(..., allow_blocking_compression=False)`. This prevents `ConversationLoop` from waiting on `micro_compact`, `collapse`, or `auto_compact` LLM summarization before the foreground model call. Background `TopicCompressor` remains responsible for derived compression caches.

@@ -196,6 +196,7 @@ JSONL + SQLite persistence for long-term context:
 
 - `events/YYYY-MM-DD.jsonl`: append-only source timeline (`user_message`, `assistant_message`, `tool_call`, `tool_result`, `turn_complete`, `context_correction`)
 - `event_index`: maps global event ids to daily JSONL shards
+- `events` SQLite table: compatibility/read fallback mirror of the JSONL timeline; `ContextStore` writes it on append and backfills it from `event_index` + JSONL on open
 - `topics`: invisible topic workspaces
 - `topic_slices`: topic-owned transcript ranges over the event log
 - `context_packets`: cached rendered packet source data

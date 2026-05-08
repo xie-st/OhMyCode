@@ -48,3 +48,21 @@ def test_packet_trims_low_priority_sections_before_priority_fields():
     assert len(rendered) <= 500
     assert "important summary" in rendered
     assert "important decision" in rendered
+
+
+def test_packet_from_dict_normalizes_structured_list_items():
+    packet = ContextPacket.from_dict(
+        {
+            "topic_id": "topic_eval",
+            "summary": {"topic": "harness", "summary": "evaluation infrastructure"},
+            "decisions": [
+                {"topic": "lm-evaluation-harness", "decision": "treat as infrastructure"},
+            ],
+        }
+    )
+
+    assert packet.summary == "topic: harness; summary: evaluation infrastructure"
+    assert packet.decisions == [
+        "topic: lm-evaluation-harness; decision: treat as infrastructure"
+    ]
+    assert "treat as infrastructure" in packet.render()

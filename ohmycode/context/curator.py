@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from ohmycode.core.messages import UserMessage
-from ohmycode.context.packet import ContextPacket
+from ohmycode.context.packet import ContextPacket, coerce_text_list
 from ohmycode.context.store import ContextStore
 from ohmycode.providers.base import stream_to_text
 
@@ -19,6 +19,7 @@ CURATOR_SYSTEM = """You are OhMyCode's background context curator.
 Read recent append-only events and existing topic workspaces. Return compact JSON only.
 Use this shape:
 {"action":"keep|patch|rebuild|new_topic","topic":{"id":"","title":"","summary":"","status":""},"packet_patch":{"summary":"","decisions":[],"open_questions":[],"next_actions":[],"related_files":[],"related_topics":[],"global_memory":[]},"topic_slices_mode":"merge|replace","topic_slices":[{"topic_id":"","start_event_id":1,"end_event_id":2}]}
+packet_patch list fields must be arrays of plain strings, not objects.
 topic_slices marks raw event ranges owned by a topic. Default topic_slices_mode is "merge"; use "replace" only when rebuilding a topic's complete slice set. Prefer small patches. Do not include markdown."""
 
 
@@ -112,7 +113,7 @@ class ContextCurator:
             "global_memory",
         ):
             if field in patch:
-                semantic_changed |= _set_if_changed(packet, field, list(patch[field]))
+                semantic_changed |= _set_if_changed(packet, field, coerce_text_list(patch[field]))
         if "summary" in patch:
             semantic_changed |= _set_if_changed(packet, "summary", patch["summary"])
         if semantic_changed:

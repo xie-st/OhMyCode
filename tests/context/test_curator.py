@@ -161,6 +161,40 @@ async def test_curator_topic_summary_updates_packet_summary():
     assert packet.version == 3
 
 
+@pytest.mark.asyncio
+async def test_curator_normalizes_structured_packet_patch_items():
+    store = _store("curator_structured_packet_patch")
+    store.append_event("user_message", "harness evaluation infrastructure")
+    topic_id = store.create_topic("lm-evaluation-harness", summary="benchmarks")
+    store.set_state("active_topic_id", topic_id)
+    store.save_packet(ContextPacket(topic_id=topic_id, title="lm-evaluation-harness"))
+
+    async def fake_curate(*args, **kwargs):
+        return json.dumps(
+            {
+                "action": "patch",
+                "topic": {"id": topic_id},
+                "packet_patch": {
+                    "decisions": [
+                        {
+                            "topic": "lm-evaluation-harness",
+                            "decision": "treat as evaluation infrastructure",
+                        }
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        )
+
+    result = await ContextCurator(store, fake_curate).run_once()
+    packet = store.load_packet(topic_id)
+
+    assert result.applied is True
+    assert packet.decisions == [
+        "topic: lm-evaluation-harness; decision: treat as evaluation infrastructure"
+    ]
+
+
 def test_curator_prompt_declares_topic_slices_contract():
     assert "topic_slices" in CURATOR_SYSTEM
     assert "topic_slices_mode" in CURATOR_SYSTEM

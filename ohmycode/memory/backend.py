@@ -23,6 +23,17 @@ def _sanitize_slug(path_str: str) -> str:
     return hashlib.sha256(path_str.encode()).hexdigest()[:16]
 
 
+def _canonical_project_root(path_str: str) -> str:
+    try:
+        resolved = Path(path_str).expanduser().resolve()
+    except OSError:
+        resolved = Path(path_str).expanduser().absolute()
+    root = resolved.as_posix().rstrip("/")
+    if os.name == "nt" and len(root) >= 2 and root[1] == ":":
+        root = root[0].upper() + root[1:]
+    return root
+
+
 def _find_git_root(cwd: str) -> str | None:
     try:
         result = subprocess.run(
@@ -38,7 +49,7 @@ def _find_git_root(cwd: str) -> str | None:
 
 def get_project_memory_dir(cwd: str) -> str:
     """Return per-project memory directory path. Uses git root if available."""
-    root = _find_git_root(cwd) or os.path.abspath(cwd)
+    root = _canonical_project_root(_find_git_root(cwd) or os.path.abspath(cwd))
     slug = _sanitize_slug(root)
     return str(Path.home() / ".ohmycode" / "projects" / slug / "memory")
 

@@ -30,20 +30,27 @@ class ContextPacket:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ContextPacket":
         allowed = cls.__dataclass_fields__.keys()
-        return cls(**{k: v for k, v in data.items() if k in allowed})
+        values = {k: v for k, v in data.items() if k in allowed}
+        for field_name in ("topic_id", "title", "summary", "status"):
+            values[field_name] = _coerce_text(values.get(field_name, ""))
+        for field_name in _TEXT_LIST_FIELDS:
+            values[field_name] = coerce_text_list(values.get(field_name, []))
+        values["version"] = int(values.get("version", 1) or 1)
+        values["last_event_id"] = int(values.get("last_event_id", 0) or 0)
+        return cls(**values)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "topic_id": self.topic_id,
             "title": self.title,
-            "summary": self.summary,
-            "status": self.status,
-            "decisions": self.decisions,
-            "open_questions": self.open_questions,
-            "next_actions": self.next_actions,
-            "related_files": self.related_files,
-            "related_topics": self.related_topics,
-            "global_memory": self.global_memory,
+            "summary": _coerce_text(self.summary),
+            "status": _coerce_text(self.status),
+            "decisions": coerce_text_list(self.decisions),
+            "open_questions": coerce_text_list(self.open_questions),
+            "next_actions": coerce_text_list(self.next_actions),
+            "related_files": coerce_text_list(self.related_files),
+            "related_topics": coerce_text_list(self.related_topics),
+            "global_memory": coerce_text_list(self.global_memory),
             "version": self.version,
             "last_event_id": self.last_event_id,
         }
@@ -97,3 +104,32 @@ class ContextPacket:
         lines.extend(f"- {item}" for item in items)
         return "\n".join(lines) + "\n"
 
+
+_TEXT_LIST_FIELDS = (
+    "decisions",
+    "open_questions",
+    "next_actions",
+    "related_files",
+    "related_topics",
+    "global_memory",
+)
+
+
+def coerce_text_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [_coerce_text(item) for item in value if item is not None]
+    return [_coerce_text(value)]
+
+
+def _coerce_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return "; ".join(f"{key}: {_coerce_text(item)}" for key, item in value.items())
+    if isinstance(value, (list, tuple)):
+        return "; ".join(_coerce_text(item) for item in value)
+    return str(value)

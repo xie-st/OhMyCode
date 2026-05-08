@@ -33,7 +33,8 @@ class TestProjectMemoryDir:
         b = get_project_memory_dir(str(tmp_path))
         assert a == b
 
-    def test_different_dirs_produce_different_slugs(self, tmp_path):
+    def test_different_dirs_produce_different_slugs(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ohmycode.memory.backend._find_git_root", lambda cwd: None)
         dir_a = tmp_path / "project_a"
         dir_b = tmp_path / "project_b"
         dir_a.mkdir()
@@ -44,6 +45,20 @@ class TestProjectMemoryDir:
         result = get_project_memory_dir(str(tmp_path))
         slug = Path(result).parent.name  # the project slug part
         assert re.match(r'^[\w\-]+$', slug), f"Slug not filesystem-safe: {slug}"
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows drive/path case behavior")
+    def test_git_root_path_variants_produce_stable_slug(self, tmp_path, monkeypatch):
+        project = tmp_path / "Alpha" / "OhMyCode"
+        project.mkdir(parents=True)
+        lower_native = str(project).lower()
+        canonical_posix = project.resolve().as_posix()
+
+        monkeypatch.setattr("ohmycode.memory.backend._find_git_root", lambda cwd: lower_native)
+        lower_result = get_project_memory_dir(str(project))
+        monkeypatch.setattr("ohmycode.memory.backend._find_git_root", lambda cwd: canonical_posix)
+        canonical_result = get_project_memory_dir(str(project))
+
+        assert lower_result == canonical_result
 
 
 class TestBTreeStoreInit:
