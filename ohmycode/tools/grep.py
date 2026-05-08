@@ -5,9 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from ohmycode.tools._common import MAX_RESULTS
 from ohmycode.tools.base import Tool, ToolContext, ToolResult, register_tool
-
-_MAX_RESULTS = 200
 
 
 @register_tool
@@ -70,9 +69,9 @@ class GrepTool(Tool):
             for lineno, line in enumerate(lines, start=1):
                 if regex.search(line):
                     matches.append(f"{file_path}:{lineno}:{line}")
-                    if len(matches) >= _MAX_RESULTS:
+                    if len(matches) >= MAX_RESULTS:
                         break
-            if len(matches) >= _MAX_RESULTS:
+            if len(matches) >= MAX_RESULTS:
                 break
 
         if not matches:

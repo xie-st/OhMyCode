@@ -2,26 +2,23 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
 from typing import Any, AsyncIterator
 
-from openai import AsyncOpenAI, AsyncAzureOpenAI
-from openai import RateLimitError, APIStatusError
+from openai import AsyncAzureOpenAI, AsyncOpenAI
+from openai import APIStatusError, RateLimitError
 
 from ohmycode.core.messages import (
+    Message,
     StreamEvent,
     TextChunk,
-    TokenUsage,
-    ToolCallStreaming,
     ToolCallStart,
+    ToolCallStreaming,
     TurnComplete,
-    Message,
 )
-from ohmycode.providers.base import Provider, ToolDef, register_provider
+from ohmycode.providers.base import BaseProvider, ToolDef, register_provider
 
 
-class OpenAIProvider:
+class OpenAIProvider(BaseProvider):
     name = "openai"
 
     def __init__(
@@ -44,6 +41,36 @@ class OpenAIProvider:
                 client_kwargs["base_url"] = base_url
             self.client = AsyncOpenAI(**client_kwargs)
 
+    def _is_retryable(self, exc: BaseException) -> bool:
+        if isinstance(exc, RateLimitError):
+            return True
+        if isinstance(exc, APIStatusError) and exc.status_code == 503:
+            return True
+        return False
+
+    def _build_request_kwargs(
+        self,
+        messages: list[Message],
+        tools: list[ToolDef],
+        system: str,
+        model: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        api_messages = [{"role": "system", "content": system}]
+        for msg in messages:
+            api_messages.append(msg.to_api_dict())
+
+        request_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": api_messages,
+            "stream": True,
+        }
+        if tools:
+            request_kwargs["tools"] = [t.to_api_dict() for t in tools]
+        if "reasoning_effort" in kwargs:
+            request_kwargs["reasoning_effort"] = kwargs["reasoning_effort"]
+        return request_kwargs
+
     async def stream(
         self,
         messages: list[Message],
@@ -52,41 +79,12 @@ class OpenAIProvider:
         model: str,
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
-        api_messages = [{"role": "system", "content": system}]
-        for msg in messages:
-            api_messages.append(msg.to_api_dict())
-
-        api_tools = [t.to_api_dict() for t in tools] if tools else None
-
-        request_kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": api_messages,
-            "stream": True,
-        }
-        if api_tools:
-            request_kwargs["tools"] = api_tools
-
-        if "reasoning_effort" in kwargs:
-            request_kwargs["reasoning_effort"] = kwargs["reasoning_effort"]
-
-        MAX_RETRIES = 3
-        RETRY_DELAYS = [1, 2, 5]
-
-        response = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                response = await self.client.chat.completions.create(**request_kwargs)
-                break
-            except RateLimitError:
-                if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(RETRY_DELAYS[attempt])
-                else:
-                    raise
-            except APIStatusError as e:
-                if e.status_code == 503 and attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(RETRY_DELAYS[attempt])
-                else:
-                    raise
+        request_kwargs = self._build_request_kwargs(
+            messages, tools, system, model, **kwargs
+        )
+        response = await self._with_retry(
+            lambda: self.client.chat.completions.create(**request_kwargs)
+        )
 
         tool_calls_acc: dict[int, dict] = {}
         finish_reason = "stop"
@@ -130,26 +128,9 @@ class OpenAIProvider:
                 prompt_tokens = chunk.usage.prompt_tokens or 0
                 completion_tokens = chunk.usage.completion_tokens or 0
 
-        for idx in sorted(tool_calls_acc.keys()):
-            tc = tool_calls_acc[idx]
-            try:
-                params = json.loads(tc["arguments"]) if tc["arguments"] else {}
-            except json.JSONDecodeError:
-                params = {"_raw": tc["arguments"]}
-            yield ToolCallStart(
-                tool_name=tc["name"],
-                tool_use_id=tc["id"],
-                params=params,
-            )
-
-        yield TurnComplete(
-            finish_reason=finish_reason,
-            usage=TokenUsage(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=prompt_tokens + completion_tokens,
-            ),
-        )
+        for ev in self._emit_tool_calls(tool_calls_acc):
+            yield ev
+        yield self._make_turn_complete(finish_reason, prompt_tokens, completion_tokens)
 
 
 register_provider("openai", OpenAIProvider)

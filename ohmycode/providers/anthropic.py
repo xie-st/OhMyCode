@@ -2,26 +2,25 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, AsyncIterator
 
 from anthropic import AsyncAnthropic
+from anthropic import APIStatusError, RateLimitError
 
 from ohmycode.core.messages import (
+    AssistantMessage,
+    ImageBlock,
+    Message,
     StreamEvent,
     TextChunk,
     ThinkingChunk,
-    TokenUsage,
-    ToolCallStreaming,
     ToolCallStart,
-    TurnComplete,
-    Message,
-    UserMessage,
-    AssistantMessage,
+    ToolCallStreaming,
     ToolResultMessage,
-    ImageBlock,
+    TurnComplete,
+    UserMessage,
 )
-from ohmycode.providers.base import ToolDef, register_provider
+from ohmycode.providers.base import BaseProvider, ToolDef, register_provider
 
 
 # Claude 4 generation supports adaptive thinking; older models use manual budgets.
@@ -31,10 +30,7 @@ _THINKING_MIN_MAX_TOKENS = 16000
 
 
 def _resolve_thinking_kwargs(model: str, effort: str, current_max_tokens: int) -> dict:
-    """Build the request kwargs needed to enable extended thinking for `model`.
-
-    Returns a dict with `thinking` and (if needed) a raised `max_tokens`.
-    """
+    """Build the request kwargs needed to enable extended thinking for `model`."""
     out: dict = {}
     if any(m in model for m in _ADAPTIVE_THINKING_MODELS):
         out["thinking"] = {"type": "adaptive", "effort": effort}
@@ -46,7 +42,7 @@ def _resolve_thinking_kwargs(model: str, effort: str, current_max_tokens: int) -
     return out
 
 
-class AnthropicProvider:
+class AnthropicProvider(BaseProvider):
     name = "anthropic"
 
     def __init__(self, api_key: str = "", base_url: str = "", auth_token: str = "", **kwargs: Any):
@@ -59,18 +55,22 @@ class AnthropicProvider:
             client_kwargs["auth_token"] = auth_token
         self.client = AsyncAnthropic(**client_kwargs)
 
+    def _is_retryable(self, exc: BaseException) -> bool:
+        if isinstance(exc, RateLimitError):
+            return True
+        if isinstance(exc, APIStatusError):
+            status = getattr(exc, "status_code", None)
+            return status == 503 or status == 529
+        return False
+
     def _convert_messages(self, messages: list[Message]) -> list[dict]:
         """Convert internal message format to Anthropic API format."""
         result: list[dict] = []
-        i = 0
-        while i < len(messages):
-            msg = messages[i]
-
+        for msg in messages:
             if isinstance(msg, UserMessage):
                 if isinstance(msg.content, str):
                     result.append({"role": "user", "content": msg.content})
                 else:
-                    # Multimodal: convert to Anthropic content block list
                     content_blocks: list[dict] = []
                     for item in msg.content:
                         if isinstance(item, str):
@@ -103,8 +103,6 @@ class AnthropicProvider:
                 result.append({"role": "assistant", "content": content if content else ""})
 
             elif isinstance(msg, ToolResultMessage):
-                # Anthropic requires tool results in a user message content list.
-                # If the previous message is already a user message aggregating tool results, merge.
                 tool_result_block = {
                     "type": "tool_result",
                     "tool_use_id": msg.tool_use_id,
@@ -118,27 +116,22 @@ class AnthropicProvider:
                 else:
                     result.append({"role": "user", "content": [tool_result_block]})
 
-            i += 1
-
         return result
 
-    async def stream(
+    def _build_request_kwargs(
         self,
         messages: list[Message],
         tools: list[ToolDef],
         system: str,
         model: str,
         **kwargs: Any,
-    ) -> AsyncIterator[StreamEvent]:
-        api_messages = self._convert_messages(messages)
-
+    ) -> dict[str, Any]:
         request_kwargs: dict[str, Any] = {
             "model": model,
             "max_tokens": kwargs.get("max_tokens", 4096),
-            "messages": api_messages,
+            "messages": self._convert_messages(messages),
             "system": system,
         }
-
         if tools:
             request_kwargs["tools"] = [
                 {
@@ -148,7 +141,6 @@ class AnthropicProvider:
                 }
                 for t in tools
             ]
-
         if "reasoning_effort" in kwargs:
             request_kwargs.update(
                 _resolve_thinking_kwargs(
@@ -157,16 +149,32 @@ class AnthropicProvider:
                     current_max_tokens=request_kwargs.get("max_tokens", 0),
                 )
             )
+        return request_kwargs
+
+    async def stream(
+        self,
+        messages: list[Message],
+        tools: list[ToolDef],
+        system: str,
+        model: str,
+        **kwargs: Any,
+    ) -> AsyncIterator[StreamEvent]:
+        request_kwargs = self._build_request_kwargs(
+            messages, tools, system, model, **kwargs
+        )
 
         finish_reason = "stop"
         prompt_tokens = 0
         completion_tokens = 0
-
-        # Accumulate tool-call state
         tool_calls_acc: dict[int, dict] = {}
-        current_tool_index: int | None = None
 
-        async with self.client.messages.stream(**request_kwargs) as stream:
+        # The Anthropic SDK exposes streaming as an async context manager. The
+        # retry has to wrap the *entry* into the stream, not the iteration.
+        stream_cm = await self._with_retry(
+            lambda: self._open_stream(request_kwargs)
+        )
+
+        async with stream_cm as stream:
             async for event in stream:
                 event_type = event.type
 
@@ -179,7 +187,6 @@ class AnthropicProvider:
                             "name": block.name,
                             "arguments": "",
                         }
-                        current_tool_index = idx
                         yield ToolCallStreaming(tool_name=block.name, tool_use_id=block.id)
 
                 elif event_type == "content_block_delta":
@@ -208,29 +215,17 @@ class AnthropicProvider:
                         prompt_tokens = getattr(event.message.usage, "input_tokens", 0)
                         completion_tokens = getattr(event.message.usage, "output_tokens", 0)
 
-        # Emit tool-call events
-        for idx in sorted(tool_calls_acc.keys()):
-            tc = tool_calls_acc[idx]
-            try:
-                params = json.loads(tc["arguments"]) if tc["arguments"] else {}
-            except json.JSONDecodeError:
-                params = {"_raw": tc["arguments"]}
-            yield ToolCallStart(
-                tool_name=tc["name"],
-                tool_use_id=tc["id"],
-                params=params,
-            )
+        for ev in self._emit_tool_calls(tool_calls_acc):
+            yield ev
+        yield self._make_turn_complete(finish_reason, prompt_tokens, completion_tokens)
 
-        prompt_tokens = prompt_tokens or 0
-        completion_tokens = completion_tokens or 0
-        yield TurnComplete(
-            finish_reason=finish_reason,
-            usage=TokenUsage(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=prompt_tokens + completion_tokens,
-            ),
-        )
+    async def _open_stream(self, request_kwargs: dict[str, Any]) -> Any:
+        """Return the streaming async-context-manager from the SDK.
+
+        Wrapped in an async function so ``_with_retry`` can call it via a
+        zero-arg lambda factory.
+        """
+        return self.client.messages.stream(**request_kwargs)
 
 
 register_provider("anthropic", AnthropicProvider)

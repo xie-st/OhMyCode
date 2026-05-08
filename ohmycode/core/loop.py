@@ -5,30 +5,47 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from typing import AsyncIterator, Callable, Awaitable, Any
+from dataclasses import dataclass, field
+from typing import Any, AsyncIterator, Awaitable, Callable
 
-from ohmycode.core.messages import (
-    UserMessage,
-    AssistantMessage,
-    ToolResultMessage,
-    ToolUseBlock,
-    TextChunk,
-    ThinkingChunk,
-    ToolCallStreaming,
-    ToolCallStart,
-    ToolCallResult,
-    TurnComplete,
-    TokenUsage,
-    StreamEvent,
-    Message,
-    ImageBlock,
+from ohmycode.config.config import OhMyCodeConfig
+from ohmycode.core.compression import (
+    auto_import_compression_strategies,
+    get_compression_strategy,
 )
 from ohmycode.core.context import ContextManager
+from ohmycode.core.messages import (
+    AssistantMessage,
+    ImageBlock,
+    Message,
+    StreamEvent,
+    TextChunk,
+    ThinkingChunk,
+    ToolCallResult,
+    ToolCallStart,
+    ToolCallStreaming,
+    ToolResultMessage,
+    ToolUseBlock,
+    TokenUsage,
+    TurnComplete,
+    UserMessage,
+)
 from ohmycode.core.permissions import check_permission
 from ohmycode.core.system_prompt import build_system_prompt, find_project_instructions
-from ohmycode.providers.base import get_provider, auto_import_providers
-from ohmycode.tools.base import auto_import_tools, get_tool_defs, run_tool_calls, ToolContext
-from ohmycode.config.config import OhMyCodeConfig
+from ohmycode.providers.base import auto_import_providers, get_provider
+from ohmycode.tools.base import ToolContext, auto_import_tools, get_tool_defs, run_tool_calls
+
+
+@dataclass
+class _RoundState:
+    """Mutable container for what one streaming round produced."""
+
+    collected_text: str = ""
+    collected_tool_calls: list[ToolCallStart] = field(default_factory=list)
+    last_usage: TokenUsage = field(
+        default_factory=lambda: TokenUsage(0, 0, 0)
+    )
+    last_finish_reason: str = "stop"
 
 
 class ConversationLoop:
@@ -47,10 +64,26 @@ class ConversationLoop:
         self._provider: Any = None
         self._system_prompt: str = ""
         self.think: str | None = None
-        self.context_mgr = ContextManager(
+        auto_import_compression_strategies()
+        self._compression: Any = get_compression_strategy(
+            config.compression_strategy,
             token_budget=config.token_budget,
             output_reserved=config.output_tokens_reserved,
         )
+        # The default tiered strategy *is* a ``ContextManager``, so it doubles
+        # as the token-counting helper used by ``get_status_snapshot``.
+        # When a custom strategy is plugged in that is *not* a ``ContextManager``,
+        # we keep a separate one for measurement.
+        self.context_mgr = (
+            self._compression
+            if isinstance(self._compression, ContextManager)
+            else ContextManager(
+                token_budget=config.token_budget,
+                output_reserved=config.output_tokens_reserved,
+            )
+        )
+
+    # ── Setup ────────────────────────────────────────────────────────────────
 
     def initialize(self) -> None:
         """Initialize: import providers/tools, create provider, build system prompt."""
@@ -69,17 +102,25 @@ class ConversationLoop:
             provider_kwargs["azure_api_version"] = self.config.azure_api_version
 
         self._provider = get_provider(self.config.provider, **provider_kwargs)
+        self._system_prompt = self._build_initial_system_prompt()
 
-        from ohmycode.memory.memory import BTreeMemoryStore, get_project_memory_dir
+    def _build_initial_system_prompt(self) -> str:
+        from ohmycode.memory.backend import (
+            auto_import_memory_backends,
+            get_memory_backend,
+            get_project_memory_dir,
+        )
 
         cwd = os.getcwd()
         project_instructions = find_project_instructions(cwd)
+
+        auto_import_memory_backends()
 
         mem_dir = ""
         memory_content = ""
         try:
             mem_dir = get_project_memory_dir(cwd)
-            store = BTreeMemoryStore(mem_dir)
+            store = get_memory_backend(self.config.memory_backend, memory_dir=mem_dir)
             store.ensure_tree()
             memory_content = store.get_root_index()
         except Exception as exc:
@@ -90,7 +131,7 @@ class ConversationLoop:
             mem_dir = ""
             memory_content = ""
 
-        self._system_prompt = build_system_prompt(
+        return build_system_prompt(
             mode=self.config.mode,
             cwd=cwd,
             project_instructions=project_instructions,
@@ -144,15 +185,14 @@ class ConversationLoop:
             "model": self.config.model,
         }
 
+    # ── Main loop ────────────────────────────────────────────────────────────
+
     async def run_turn(
         self,
         system_prompt_override: str | None = None,
         allow_blocking_compression: bool = True,
     ) -> AsyncIterator[StreamEvent]:
-        """Run one conversation turn (may include multiple tool round-trips).
-
-        Yields StreamEvent for the caller (CLI) to render.
-        """
+        """Run one conversation turn (may include multiple tool round-trips)."""
         self._cancelled = False
         turn_system_prompt = system_prompt_override or self._system_prompt
         turn_count = 0
@@ -164,7 +204,6 @@ class ConversationLoop:
         # flushes them out alongside ToolCallResult so the renderer can show
         # sub-agent progress without tools knowing about the UI layer.
         sub_event_buffer: list[StreamEvent] = []
-
         ctx = ToolContext(
             mode=self.config.mode,
             agent_depth=0,
@@ -174,223 +213,245 @@ class ConversationLoop:
             event_emitter=sub_event_buffer.append,
         )
 
-        # Latest usage (updated after each provider call)
-        last_usage = TokenUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
-        last_finish_reason = "stop"
+        round_state = _RoundState()
 
         while turn_count < max_turns and not self._cancelled:
             turn_count += 1
 
-            # ── Context compression (if needed) ────────────────────────────────
-            try:
-                self.messages = await self.context_mgr.maybe_compress(
-                    self.messages,
-                    turn_system_prompt,
-                    self._provider,
-                    self.config.model,
-                    allow_llm=allow_blocking_compression,
-                )
-            except RuntimeError:
+            if not await self._compress(turn_system_prompt, allow_blocking_compression):
                 yield TurnComplete(finish_reason="error", usage=TokenUsage(0, 0, 0))
                 return
 
-            # ── Call provider.stream() ───────────────────────────────────────
-            collected_text = ""
-            collected_tool_calls: list[ToolCallStart] = []
-
             try:
-                stream_kwargs: dict[str, Any] = {}
-                if self.think:
-                    stream_kwargs["reasoning_effort"] = self.think
-                async for event in self._provider.stream(
-                    messages=self.messages,
-                    tools=tool_defs,
-                    system=turn_system_prompt,
-                    model=self.config.model,
-                    **stream_kwargs,
+                async for ev in self._stream_one_round(
+                    turn_system_prompt, tool_defs, round_state
                 ):
-                    if self._cancelled:
-                        break
-
-                    if isinstance(event, TextChunk):
-                        collected_text += event.text
-                        yield event
-
-                    elif isinstance(event, ThinkingChunk):
-                        yield event
-
-                    elif isinstance(event, ToolCallStreaming):
-                        yield event
-
-                    elif isinstance(event, ToolCallStart):
-                        collected_tool_calls.append(event)
-                        yield event
-
-                    elif isinstance(event, TurnComplete):
-                        last_usage = event.usage
-                        last_finish_reason = event.finish_reason
+                    yield ev
             except asyncio.CancelledError:
-                # render_stream task was cancelled by Ctrl+C — save partial reply
-                if collected_text:
-                    self.messages.append(AssistantMessage(content=collected_text, tool_calls=[]))
-                yield TurnComplete(finish_reason="cancelled", usage=last_usage)
+                if round_state.collected_text:
+                    self.messages.append(
+                        AssistantMessage(content=round_state.collected_text, tool_calls=[])
+                    )
+                yield TurnComplete(finish_reason="cancelled", usage=round_state.last_usage)
                 raise
             except Exception as e:
                 yield TextChunk(text=f"\n[API Error: {e}]\n")
                 yield TurnComplete(finish_reason="error", usage=TokenUsage(0, 0, 0))
                 return
 
-            # ── Handle cancellation via flag (conv.cancel() path) ─────────────
             if self._cancelled:
-                if collected_text:
-                    self.messages.append(AssistantMessage(content=collected_text, tool_calls=[]))
-                yield TurnComplete(finish_reason="cancelled", usage=last_usage)
+                if round_state.collected_text:
+                    self.messages.append(
+                        AssistantMessage(content=round_state.collected_text, tool_calls=[])
+                    )
+                yield TurnComplete(finish_reason="cancelled", usage=round_state.last_usage)
                 return
 
-            # ── Record assistant message ───────────────────────────────────────
-            tool_use_blocks = [
-                ToolUseBlock(
-                    tool_use_id=tc.tool_use_id,
-                    tool_name=tc.tool_name,
-                    params=tc.params,
-                )
-                for tc in collected_tool_calls
-            ]
-            self.messages.append(
-                AssistantMessage(
-                    content=collected_text,
-                    tool_calls=tool_use_blocks,
-                )
-            )
+            self._record_assistant_message(round_state)
 
-            # ── No tool calls or non-tool_use finish: end turn ─────────────────
-            if not collected_tool_calls or last_finish_reason != "tool_use":
-                yield TurnComplete(finish_reason=last_finish_reason, usage=last_usage)
+            if (
+                not round_state.collected_tool_calls
+                or round_state.last_finish_reason != "tool_use"
+            ):
+                yield TurnComplete(
+                    finish_reason=round_state.last_finish_reason,
+                    usage=round_state.last_usage,
+                )
                 return
-
-            # ── Permission checks + tool execution ────────────────────────────
-            # Track which tool_call_ids already have a ToolResultMessage so we
-            # can fill in the blanks if the task is cancelled mid-way.
-            responded_ids: set[str] = set()
-            permitted_calls: list[dict] = []
 
             try:
-                for tc in collected_tool_calls:
-                    perm = check_permission(
-                        tool_name=tc.tool_name,
-                        params=tc.params,
-                        mode=self.config.mode,
-                        rules=self.config.rules,
-                        auto_approved=self.auto_approved,
-                    )
-
-                    if perm.action == "deny":
-                        error_msg = f"Permission denied: {perm.reason}"
-                        self.messages.append(
-                            ToolResultMessage(
-                                tool_use_id=tc.tool_use_id,
-                                content=error_msg,
-                                is_error=True,
-                            )
-                        )
-                        responded_ids.add(tc.tool_use_id)
-                        yield ToolCallResult(
-                            tool_use_id=tc.tool_use_id,
-                            result=error_msg,
-                            is_error=True,
-                        )
-                        continue
-
-                    if perm.action == "ask" and self.confirm_fn is not None:
-                        answer = await self.confirm_fn(tc.tool_name, tc.params)
-                        answer = answer.strip().lower()
-                        if answer == "a":
-                            # Auto-approve this tool for the rest of the session
-                            self.auto_approved[tc.tool_name] = True
-                            permitted_calls.append(
-                                {
-                                    "tool_name": tc.tool_name,
-                                    "tool_use_id": tc.tool_use_id,
-                                    "params": tc.params,
-                                }
-                            )
-                        elif answer == "y":
-                            permitted_calls.append(
-                                {
-                                    "tool_name": tc.tool_name,
-                                    "tool_use_id": tc.tool_use_id,
-                                    "params": tc.params,
-                                }
-                            )
-                        else:
-                            # User denied
-                            error_msg = "User denied tool execution."
-                            self.messages.append(
-                                ToolResultMessage(
-                                    tool_use_id=tc.tool_use_id,
-                                    content=error_msg,
-                                    is_error=True,
-                                )
-                            )
-                            responded_ids.add(tc.tool_use_id)
-                            yield ToolCallResult(
-                                tool_use_id=tc.tool_use_id,
-                                result=error_msg,
-                                is_error=True,
-                            )
-                    else:
-                        # allow (or run ask without confirm_fn)
-                        permitted_calls.append(
-                            {
-                                "tool_name": tc.tool_name,
-                                "tool_use_id": tc.tool_use_id,
-                                "params": tc.params,
-                            }
-                        )
-
-                # ── Execute permitted tool calls ───────────────────────────────
-                if permitted_calls:
-                    results = await run_tool_calls(permitted_calls, ctx)
-
-                    # Flush any sub-agent events that tools pushed during execution.
-                    while sub_event_buffer:
-                        yield sub_event_buffer.pop(0)
-
-                    for call in permitted_calls:
-                        tid = call["tool_use_id"]
-                        tool_result = results[tid]
-                        self.messages.append(
-                            ToolResultMessage(
-                                tool_use_id=tid,
-                                content=tool_result.output,
-                                is_error=tool_result.is_error,
-                            )
-                        )
-                        responded_ids.add(tid)
-                        yield ToolCallResult(
-                            tool_use_id=tid,
-                            result=tool_result.output,
-                            is_error=tool_result.is_error,
-                        )
-
+                async for ev in self._authorize_and_execute(
+                    round_state.collected_tool_calls, ctx, sub_event_buffer
+                ):
+                    yield ev
             except asyncio.CancelledError:
-                # Fill in placeholder results for any tool_calls without a response
-                for tc in collected_tool_calls:
-                    if tc.tool_use_id not in responded_ids:
-                        self.messages.append(
-                            ToolResultMessage(
-                                tool_use_id=tc.tool_use_id,
-                                content="Cancelled by user.",
-                                is_error=False,
-                            )
-                        )
-                yield TurnComplete(finish_reason="cancelled", usage=last_usage)
+                yield TurnComplete(finish_reason="cancelled", usage=round_state.last_usage)
                 raise
 
-            # Continue loop: model sees tool results and produces next reply
+        yield TurnComplete(finish_reason="max_turns", usage=round_state.last_usage)
 
-        # Exceeded max_turns
-        yield TurnComplete(
-            finish_reason="max_turns",
-            usage=last_usage,
+    # ── Phase helpers ────────────────────────────────────────────────────────
+
+    async def _compress(self, turn_system_prompt: str, allow_llm: bool) -> bool:
+        """Run compression if needed. Returns False on circuit-breaker error."""
+        try:
+            self.messages = await self._compression.maybe_compress(
+                self.messages,
+                turn_system_prompt,
+                self._provider,
+                self.config.model,
+                allow_llm=allow_llm,
+            )
+            return True
+        except RuntimeError:
+            return False
+
+    async def _stream_one_round(
+        self,
+        turn_system_prompt: str,
+        tool_defs: list,
+        round_state: _RoundState,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream one provider round; mutate round_state with what arrived."""
+        round_state.collected_text = ""
+        round_state.collected_tool_calls = []
+
+        stream_kwargs: dict[str, Any] = {}
+        if self.think:
+            stream_kwargs["reasoning_effort"] = self.think
+
+        async for event in self._provider.stream(
+            messages=self.messages,
+            tools=tool_defs,
+            system=turn_system_prompt,
+            model=self.config.model,
+            **stream_kwargs,
+        ):
+            if self._cancelled:
+                break
+
+            if isinstance(event, TextChunk):
+                round_state.collected_text += event.text
+                yield event
+            elif isinstance(event, ThinkingChunk):
+                yield event
+            elif isinstance(event, ToolCallStreaming):
+                yield event
+            elif isinstance(event, ToolCallStart):
+                round_state.collected_tool_calls.append(event)
+                yield event
+            elif isinstance(event, TurnComplete):
+                round_state.last_usage = event.usage
+                round_state.last_finish_reason = event.finish_reason
+
+    def _record_assistant_message(self, round_state: _RoundState) -> None:
+        tool_use_blocks = [
+            ToolUseBlock(
+                tool_use_id=tc.tool_use_id,
+                tool_name=tc.tool_name,
+                params=tc.params,
+            )
+            for tc in round_state.collected_tool_calls
+        ]
+        self.messages.append(
+            AssistantMessage(
+                content=round_state.collected_text,
+                tool_calls=tool_use_blocks,
+            )
         )
+
+    async def _authorize_and_execute(
+        self,
+        tool_calls: list[ToolCallStart],
+        ctx: ToolContext,
+        sub_event_buffer: list[StreamEvent],
+    ) -> AsyncIterator[StreamEvent]:
+        """Permission check + execute permitted calls; record results.
+
+        On asyncio.CancelledError, fills placeholder results for any unanswered
+        tool_call_ids and re-raises (caller emits the final TurnComplete).
+        """
+        responded_ids: set[str] = set()
+        permitted_calls: list[dict] = []
+
+        try:
+            for tc in tool_calls:
+                async for ev in self._authorize_one(
+                    tc, permitted_calls, responded_ids
+                ):
+                    yield ev
+
+            if not permitted_calls:
+                return
+
+            results = await run_tool_calls(permitted_calls, ctx)
+
+            while sub_event_buffer:
+                yield sub_event_buffer.pop(0)
+
+            for call in permitted_calls:
+                tid = call["tool_use_id"]
+                tool_result = results[tid]
+                self.messages.append(
+                    ToolResultMessage(
+                        tool_use_id=tid,
+                        content=tool_result.output,
+                        is_error=tool_result.is_error,
+                    )
+                )
+                responded_ids.add(tid)
+                yield ToolCallResult(
+                    tool_use_id=tid,
+                    result=tool_result.output,
+                    is_error=tool_result.is_error,
+                )
+        except asyncio.CancelledError:
+            for tc in tool_calls:
+                if tc.tool_use_id not in responded_ids:
+                    self.messages.append(
+                        ToolResultMessage(
+                            tool_use_id=tc.tool_use_id,
+                            content="Cancelled by user.",
+                            is_error=False,
+                        )
+                    )
+            raise
+
+    async def _authorize_one(
+        self,
+        tc: ToolCallStart,
+        permitted_calls: list[dict],
+        responded_ids: set[str],
+    ) -> AsyncIterator[StreamEvent]:
+        """Run the permission ladder for a single tool call."""
+        perm = check_permission(
+            tool_name=tc.tool_name,
+            params=tc.params,
+            mode=self.config.mode,
+            rules=self.config.rules,
+            auto_approved=self.auto_approved,
+        )
+
+        call_dict = {
+            "tool_name": tc.tool_name,
+            "tool_use_id": tc.tool_use_id,
+            "params": tc.params,
+        }
+
+        if perm.action == "deny":
+            error_msg = f"Permission denied: {perm.reason}"
+            self._record_tool_error(tc.tool_use_id, error_msg, responded_ids)
+            yield ToolCallResult(
+                tool_use_id=tc.tool_use_id, result=error_msg, is_error=True
+            )
+            return
+
+        if perm.action == "ask" and self.confirm_fn is not None:
+            answer = (await self.confirm_fn(tc.tool_name, tc.params)).strip().lower()
+            if answer == "a":
+                self.auto_approved[tc.tool_name] = True
+                permitted_calls.append(call_dict)
+            elif answer == "y":
+                permitted_calls.append(call_dict)
+            else:
+                error_msg = "User denied tool execution."
+                self._record_tool_error(tc.tool_use_id, error_msg, responded_ids)
+                yield ToolCallResult(
+                    tool_use_id=tc.tool_use_id, result=error_msg, is_error=True
+                )
+            return
+
+        # allow (or "ask" without confirm_fn)
+        permitted_calls.append(call_dict)
+
+    def _record_tool_error(
+        self, tool_use_id: str, message: str, responded_ids: set[str]
+    ) -> None:
+        self.messages.append(
+            ToolResultMessage(
+                tool_use_id=tool_use_id,
+                content=message,
+                is_error=True,
+            )
+        )
+        responded_ids.add(tool_use_id)

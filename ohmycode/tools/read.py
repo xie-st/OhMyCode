@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ohmycode.core.file_utils import read_lines_numbered
+from ohmycode.tools._common import format_file_error
 from ohmycode.tools.base import Tool, ToolContext, ToolResult, register_tool
 
 
@@ -41,8 +42,8 @@ class ReadTool(Tool):
 
         try:
             numbered, _ = read_lines_numbered(file_path, offset=offset, limit=limit)
-        except FileNotFoundError:
-            return ToolResult(output=f"File not found: {file_path}", is_error=True)
+        except (FileNotFoundError, PermissionError, IsADirectoryError) as exc:
+            return ToolResult(output=format_file_error(file_path, exc), is_error=True)
         except Exception as exc:
             return ToolResult(output=f"Error reading file: {exc}", is_error=True)
 

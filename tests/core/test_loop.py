@@ -119,12 +119,12 @@ async def test_run_turn_uses_system_prompt_override():
 
 @pytest.mark.asyncio
 async def test_run_turn_can_disable_blocking_compression():
-    class CapturingContextManager:
+    class CapturingStrategy:
         def __init__(self):
             self.allow_llm_values = []
 
         async def maybe_compress(
-            self, messages, system_prompt, provider, model, allow_llm=True
+            self, messages, system_prompt, provider, model, *, allow_llm=True
         ):
             self.allow_llm_values.append(allow_llm)
             return messages
@@ -140,12 +140,12 @@ async def test_run_turn_can_disable_blocking_compression():
     conv = ConversationLoop(config=config)
     conv._provider = SimpleProvider()
     conv._system_prompt = "base"
-    conv.context_mgr = CapturingContextManager()
+    conv._compression = CapturingStrategy()
     conv.add_user_message("Hi")
 
     events = [
         e async for e in conv.run_turn(allow_blocking_compression=False)
     ]
 
-    assert conv.context_mgr.allow_llm_values == [False]
+    assert conv._compression.allow_llm_values == [False]
     assert any(isinstance(e, TurnComplete) for e in events)

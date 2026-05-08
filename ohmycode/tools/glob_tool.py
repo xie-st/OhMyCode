@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ohmycode.tools._common import MAX_RESULTS
 from ohmycode.tools.base import Tool, ToolContext, ToolResult, register_tool
-
-_MAX_RESULTS = 200
 
 
 @register_tool
@@ -42,7 +41,7 @@ class GlobTool(Tool):
 
         # Sort by mtime descending
         matches.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
-        matches = matches[:_MAX_RESULTS]
+        matches = matches[:MAX_RESULTS]
 
         if not matches:
             return ToolResult(output="No files matched.", is_error=False)

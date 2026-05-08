@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ohmycode.tools._common import format_file_error
 from ohmycode.tools.base import Tool, ToolContext, ToolResult, register_tool
 
 
@@ -40,8 +41,8 @@ class EditTool(Tool):
 
         try:
             content = file_path.read_text(errors="replace")
-        except FileNotFoundError:
-            return ToolResult(output=f"File not found: {file_path}", is_error=True)
+        except (FileNotFoundError, PermissionError, IsADirectoryError) as exc:
+            return ToolResult(output=format_file_error(file_path, exc), is_error=True)
         except Exception as exc:
             return ToolResult(output=f"Error reading file: {exc}", is_error=True)
 

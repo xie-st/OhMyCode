@@ -30,6 +30,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "context_visibility": "silent",
     "context_ambiguity_confirmation": True,
     "context_curator": "async",
+    "memory_backend": "btree",
+    "compression_strategy": "tiered",
 }
 
 
@@ -55,6 +57,8 @@ class OhMyCodeConfig(BaseModel):
     context_visibility: str = "silent"
     context_ambiguity_confirmation: bool = True
     context_curator: str = "async"
+    memory_backend: str = "btree"
+    compression_strategy: str = "tiered"
 
 
 def merge_configs(base: dict, override: dict) -> dict:
