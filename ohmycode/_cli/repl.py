@@ -221,14 +221,22 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
             {"tool_use_id": tool_call.tool_use_id, "params": tool_call.params},
             ensure_ascii=False,
         )
-        context_runtime.record_tool_call(tool_call.tool_name, payload)
+        context_runtime.record_tool_call(
+            tool_call.tool_name,
+            payload,
+            tool_use_id=tool_call.tool_use_id,
+            params=tool_call.params,
+        )
 
     async def _stream_with_cancel(
         c: ConversationLoop,
         system_prompt_override: str | None = None,
+        allow_blocking_compression: bool = True,
     ) -> str:
         """Run render_stream as a Task; cancel it if cancel_event fires."""
-        render_task = asyncio.create_task(render_stream(c, system_prompt_override))
+        render_task = asyncio.create_task(
+            render_stream(c, system_prompt_override, allow_blocking_compression)
+        )
         if cancel_event is None:
             return await render_task
         stop_polling = threading.Event()
@@ -320,7 +328,12 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
             _repl_print(f"  [yellow]{w}[/yellow]")
         system_prompt_override = None
         if context_runtime is not None:
-            user_event_id = context_runtime.record_user_message(expanded_input)
+            user_event_id = context_runtime.record_user_message(
+                expanded_input,
+                raw_content=user_input,
+                image_blocks=image_blocks,
+                ref_warnings=ref_warnings,
+            )
             prepared = context_runtime.prepare_for_turn(
                 expanded_input,
                 conv._system_prompt,
@@ -335,7 +348,11 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
         conv.add_user_message(expanded_input, image_blocks=image_blocks or None)
         context_start_idx = len(conv.messages)
 
-        finish_reason = await _stream_with_cancel(conv, system_prompt_override)
+        finish_reason = await _stream_with_cancel(
+            conv,
+            system_prompt_override,
+            allow_blocking_compression=context_runtime is None,
+        )
         _record_context_messages(context_start_idx, finish_reason)
         if context_runtime is not None:
             _schedule_topic_compression(context_runtime.store.get_state("active_topic_id", ""))

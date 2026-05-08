@@ -115,3 +115,37 @@ async def test_run_turn_uses_system_prompt_override():
 
     assert provider.systems == ["base\n\npacket"]
     assert any(isinstance(e, TurnComplete) for e in events)
+
+
+@pytest.mark.asyncio
+async def test_run_turn_can_disable_blocking_compression():
+    class CapturingContextManager:
+        def __init__(self):
+            self.allow_llm_values = []
+
+        async def maybe_compress(
+            self, messages, system_prompt, provider, model, allow_llm=True
+        ):
+            self.allow_llm_values.append(allow_llm)
+            return messages
+
+    class SimpleProvider:
+        name = "simple"
+
+        async def stream(self, messages, tools, system, model, **kwargs):
+            yield TextChunk(text="ok")
+            yield TurnComplete(finish_reason="stop", usage=None)
+
+    config = OhMyCodeConfig(provider="mock", model="test", mode="auto", api_key="x")
+    conv = ConversationLoop(config=config)
+    conv._provider = SimpleProvider()
+    conv._system_prompt = "base"
+    conv.context_mgr = CapturingContextManager()
+    conv.add_user_message("Hi")
+
+    events = [
+        e async for e in conv.run_turn(allow_blocking_compression=False)
+    ]
+
+    assert conv.context_mgr.allow_llm_values == [False]
+    assert any(isinstance(e, TurnComplete) for e in events)

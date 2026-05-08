@@ -91,11 +91,22 @@ The REPL owns long-term context state through `ohmycode/context/runtime.py`. `Co
 
 Normal REPL turns now add this pre/post layer:
 
-1. Expanded user input is appended to a daily JSONL event shard as `user_message`.
-2. `ContextRuntime.prepare_for_turn()` routes the message to an active topic and reuses or updates the cached `ContextPacket`.
+1. Expanded user input is appended to a daily JSONL event shard as canonical `user_message` content, with audit metadata for raw input, file-ref warnings, and image hashes.
+2. `ContextRuntime.prepare_for_turn()` routes the message to an active topic using deterministic multilingual heuristics (Latin tokens plus CJK n-grams), then reuses or updates the cached `ContextPacket`.
 3. `_cli/context_flow.py` builds a topic transcript projection: same-topic turns keep the current `ConversationLoop.messages`; topic switches replace them with that topic's reconstructed virtual messages.
-4. `render_stream()` passes the projection system prompt to `ConversationLoop.run_turn()`.
-5. After the turn, assistant/tool/turn events are appended to the event log.
-6. A coalesced background `ContextCurator` task updates topic summaries, packet fields, and topic slices; lazy topic compression may then cache `compressed history + raw tail`.
+4. `render_stream()` passes the projection system prompt to `ConversationLoop.run_turn()` with blocking LLM compression disabled for long-term context turns.
+5. After the turn, assistant/tool/turn events are appended to the event log with structured audit payloads for tool calls and results.
+6. A coalesced background `ContextCurator` task updates topic summaries, packet fields, and topic slices; slice patches default to merge semantics, and lazy topic compression may then cache `compressed history + raw tail`.
 
-Long-term source events live under `~/.ohmycode/projects/<project_slug>/context/events/YYYY-MM-DD.jsonl`. `context.db` stores indexes and derived state: topics, packets, topic slices, compression cache, and curator state. `/new` clears only short-term `ConversationLoop.messages` when context is enabled; `/mode` creates a fresh loop for the mode but keeps the same REPL-owned context runtime.
+Long-term source events live under `~/.ohmycode/projects/<project_slug>/context/events/YYYY-MM-DD.jsonl`. `content` is the canonical model-facing event payload; `metadata.audit` preserves raw input and replay/debug details without duplicating image base64. `context.db` stores indexes and derived state: topics, packets, topic slices, compression cache, and curator state. `/new` clears only short-term `ConversationLoop.messages` when context is enabled; `/mode` creates a fresh loop for the mode but keeps the same REPL-owned context runtime.
+
+### Healthy context projection
+
+A long-term context turn is healthy when the injected `Current Working Context` matches the task the user is actually continuing. In practice, check these fields when debugging:
+
+- `Working directory` should be the intended project root. `ContextRuntime.for_cwd(cwd)` derives the project slug from the current directory, so starting `ohmycode` from a parent folder attaches to that parent folder's long-term context, not automatically to a child repository.
+- `Active topic` / `topic_id` should describe the current task, not an unrelated earlier exchange.
+- `Summary`, `Decisions`, `Open Questions`, `Next Actions`, and `related_files` should mention the current implementation or investigation.
+- `Transcript Projection` should include slices from the relevant topic; `raw_tail_event_count` should correspond to recent same-topic turns.
+
+If those fields point at an old topic, the projection mechanism may still be structurally working, but the selected topic is wrong for the current turn. Use `/context topics`, `/context switch <topic_id>`, or `/context rebuild` to correct long-term state, and restart from the intended project root when the workspace slug is wrong.

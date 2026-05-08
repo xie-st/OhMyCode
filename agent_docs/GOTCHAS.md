@@ -99,6 +99,8 @@ Do not store `ContextRuntime` on `ConversationLoop`; `/mode` may replace the loo
 
 `ContextRuntime.request_curator_run()` allows only one background curator task at a time. If another event arrives while it is running, it marks pending and runs one more pass after the current pass finishes. Starting parallel curators can race packet versions and `last_processed_event_id`.
 
+Curator slice patches are merge-by-default. Use `topic_slices_mode="replace"` only for explicit rebuilds; otherwise a small curator patch should call the merge path so older non-overlapping slices are not deleted.
+
 ## 20. `/new` is short-term only when context is enabled
 
 With long-term context enabled, `/new` saves the current JSON conversation for backwards compatibility, then clears `ConversationLoop.messages` and `auto_approved`; it does not delete events, topics, packets, or the active topic. Use `/context switch <topic_id>` or `/context rebuild` to correct long-term context.
@@ -109,4 +111,23 @@ When the user continues the same topic, the REPL leaves `ConversationLoop.messag
 
 ## 22. JSONL events are the source of truth; compression is only a cache
 
-Source events are written to daily `events/YYYY-MM-DD.jsonl` shards and indexed in SQLite. Topic slices and compression caches are derived state. Lazy topic compression must never rewrite or delete JSONL source events; projection combines `compressed_until_event_id` cache content with raw tail events after that watermark.
+Source events are written to daily `events/YYYY-MM-DD.jsonl` shards and indexed in SQLite. The event `content` field is the canonical model-facing payload, while `metadata.audit` stores raw input and replay/debug details such as image hashes and tool payloads. Topic slices and compression caches are derived state. Lazy topic compression must never rewrite or delete JSONL source events; projection combines `compressed_until_event_id` cache content with raw tail events after that watermark.
+
+## 23. Long-term context foreground turns avoid blocking LLM compression
+
+When context projection is enabled, `_cli/repl.py` calls `render_stream(..., allow_blocking_compression=False)`. This prevents `ConversationLoop` from waiting on `micro_compact`, `collapse`, or `auto_compact` LLM summarization before the foreground model call. Background `TopicCompressor` remains responsible for derived compression caches.
+
+## 24. Topic routing is heuristic, not semantic search
+
+`ContextRuntime` routes topics with local multilingual features: Latin tokens plus CJK n-grams over topic title, summary, and packet text. This fixes Chinese token blindness and keeps routing offline, but it is not an embedding or LLM semantic router. Low-confidence routing should prefer keep/ambiguous over surprising topic switches.
+
+## 25. A projected context can be structurally valid but semantically stale
+
+Seeing `Current Working Context` and `Transcript Projection` in the system prompt proves the long-term context path is injecting a packet, but it does not prove the active topic is the right one. The topic title, summary, decisions, open questions, related files, and projected transcript must match the user's current task.
+
+Two common causes of stale-looking context:
+
+- The REPL was started from a parent directory. Long-term context is keyed by the current working directory's project slug, so running from `C:\Users\...\Alpha` uses the Alpha workspace context even if the user is editing `Alpha\OhMyCode`.
+- The active topic was kept because routing confidence was low or the curator has not yet rebuilt packet/slice state. Use `/context topics`, `/context switch <topic_id>`, or `/context rebuild`.
+
+CJK topic titles are currently heuristic and can look awkward because they are derived from local features, not human naming. Treat an ugly title as a UX issue; treat a packet that points at the wrong task as a context correctness issue.

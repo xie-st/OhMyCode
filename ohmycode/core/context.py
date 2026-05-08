@@ -210,6 +210,7 @@ class ContextManager:
         system_prompt: str,
         provider,
         model: str,
+        allow_llm: bool = True,
     ) -> List[Message]:
         """Check usage ratio and apply the appropriate compression strategy.
 
@@ -222,6 +223,8 @@ class ContextManager:
         ratio = self.get_usage_ratio(messages, system_prompt)
         if ratio < 0.75:
             return list(messages)
+        if not allow_llm:
+            return self.snip(messages)
         if ratio < 0.80:
             return self.snip(messages)
         if ratio < 0.85:

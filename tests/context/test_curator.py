@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ohmycode.context.curator import ContextCurator, build_provider_curate_fn
+from ohmycode.context.curator import CURATOR_SYSTEM, ContextCurator, build_provider_curate_fn
 from ohmycode.core.messages import TextChunk, TokenUsage, TurnComplete
 from ohmycode.context.store import ContextStore
 
@@ -63,6 +63,63 @@ async def test_curator_applies_topic_slices():
     assert result.applied is True
     slices = store.list_topic_slices(topic_id)
     assert [(s.start_event_id, s.end_event_id) for s in slices] == [(1, 2)]
+
+
+def test_curator_prompt_declares_topic_slices_contract():
+    assert "topic_slices" in CURATOR_SYSTEM
+    assert "topic_slices_mode" in CURATOR_SYSTEM
+
+
+@pytest.mark.asyncio
+async def test_curator_merges_topic_slices_by_default():
+    store = _store("curator_merge_slices")
+    for idx in range(6):
+        store.append_event("user_message", f"event {idx}")
+    topic_id = store.create_topic("agent runtime")
+    store.set_state("active_topic_id", topic_id)
+    store.save_topic_slices(topic_id, [(1, 2)])
+
+    async def fake_curate(*args, **kwargs):
+        return json.dumps({
+            "action": "patch",
+            "topic": {"id": topic_id},
+            "topic_slices": [
+                {"topic_id": topic_id, "start_event_id": 4, "end_event_id": 5},
+            ],
+        })
+
+    result = await ContextCurator(store, fake_curate).run_once()
+
+    assert result.applied is True
+    slices = store.list_topic_slices(topic_id)
+    assert [(s.start_event_id, s.end_event_id) for s in slices] == [(1, 2), (4, 5)]
+
+
+@pytest.mark.asyncio
+async def test_curator_replaces_topic_slices_when_requested():
+    store = _store("curator_replace_slices")
+    for idx in range(6):
+        store.append_event("user_message", f"event {idx}")
+    topic_id = store.create_topic("agent runtime")
+    store.set_state("active_topic_id", topic_id)
+    store.save_topic_slices(topic_id, [(1, 2), (4, 5)])
+
+    async def fake_curate(*args, **kwargs):
+        return json.dumps({
+            "action": "rebuild",
+            "topic": {"id": topic_id},
+            "topic_slices_mode": "replace",
+            "topic_slices": [
+                {"topic_id": topic_id, "start_event_id": 6, "end_event_id": 6},
+                {"topic_id": topic_id, "start_event_id": 8, "end_event_id": 7},
+            ],
+        })
+
+    result = await ContextCurator(store, fake_curate).run_once()
+
+    assert result.applied is True
+    slices = store.list_topic_slices(topic_id)
+    assert [(s.start_event_id, s.end_event_id) for s in slices] == [(6, 6)]
 
 
 @pytest.mark.asyncio

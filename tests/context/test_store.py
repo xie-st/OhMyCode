@@ -100,3 +100,29 @@ def test_store_saves_topic_slices_and_compression_cache():
     assert cache is not None
     assert cache.compressed_until_event_id == 12
     assert "compressed" in cache.messages_json
+
+
+def test_store_merges_topic_slices_without_replacing_existing_ranges():
+    store = ContextStore(_db_path("store_merge_slices"))
+    topic_id = store.create_topic("agent runtime")
+    store.save_topic_slices(topic_id, [(1, 5), (10, 12)])
+
+    store.merge_topic_slices(topic_id, [(5, 8), (20, 22), (30, 29)])
+
+    slices = store.list_topic_slices(topic_id)
+    assert [(s.start_event_id, s.end_event_id) for s in slices] == [
+        (1, 8),
+        (10, 12),
+        (20, 22),
+    ]
+
+
+def test_store_save_topic_slices_remains_full_replacement():
+    store = ContextStore(_db_path("store_replace_slices"))
+    topic_id = store.create_topic("agent runtime")
+    store.save_topic_slices(topic_id, [(1, 5), (10, 12)])
+
+    store.save_topic_slices(topic_id, [(20, 22)])
+
+    slices = store.list_topic_slices(topic_id)
+    assert [(s.start_event_id, s.end_event_id) for s in slices] == [(20, 22)]

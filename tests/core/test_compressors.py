@@ -99,3 +99,27 @@ def test_circuit_breaker_raises_after_failures():
                 await mgr.micro_compact(messages, broken_provider, "model")
 
     asyncio.run(run())
+
+
+@pytest.mark.asyncio
+async def test_maybe_compress_can_skip_llm_compression():
+    mgr = ContextManager(token_budget=80, output_reserved=10)
+    messages = [
+        UserMessage(content=f"message {idx} " + ("word " * 20))
+        for idx in range(12)
+    ]
+
+    class FailingProvider:
+        async def stream(self, *args, **kwargs):
+            raise AssertionError("LLM summarization should not run")
+            yield
+
+    compressed = await mgr.maybe_compress(
+        messages,
+        "",
+        FailingProvider(),
+        "model",
+        allow_llm=False,
+    )
+
+    assert len(compressed) < len(messages)

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from ohmycode.context.packet import ContextPacket
 from ohmycode.context.store import ContextStore, Topic
+from ohmycode.core.messages import ImageBlock
 from ohmycode.memory.memory import get_project_memory_dir
 
 
@@ -42,8 +46,22 @@ class ContextRuntime:
         db_path = memory_dir.parent / "context" / "context.db"
         return cls(ContextStore(db_path))
 
-    def record_user_message(self, content: str) -> int:
-        return self.store.append_event("user_message", content)
+    def record_user_message(
+        self,
+        content: str,
+        raw_content: str | None = None,
+        image_blocks: list[ImageBlock] | None = None,
+        ref_warnings: list[str] | None = None,
+    ) -> int:
+        metadata = {
+            "audit": {
+                "raw_content": content if raw_content is None else raw_content,
+                "expanded_content": content,
+                "ref_warnings": ref_warnings or [],
+                "images": [_image_audit(image) for image in image_blocks or []],
+            }
+        }
+        return self.store.append_event("user_message", content, metadata)
 
     def record_assistant_message(
         self,
@@ -53,12 +71,33 @@ class ContextRuntime:
         metadata = {"tool_calls": tool_calls or []}
         return self.store.append_event("assistant_message", content, metadata)
 
-    def record_tool_call(self, tool_name: str, content: str) -> int:
-        return self.store.append_event("tool_call", content, {"tool_name": tool_name})
+    def record_tool_call(
+        self,
+        tool_name: str,
+        content: str,
+        tool_use_id: str | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> int:
+        payload = _tool_call_payload(content, tool_use_id, params)
+        return self.store.append_event(
+            "tool_call",
+            content,
+            {"tool_name": tool_name, "audit": {"tool_name": tool_name, **payload}},
+        )
 
     def record_tool_result(self, tool_use_id: str, content: str, is_error: bool) -> int:
         return self.store.append_event(
-            "tool_result", content, {"tool_use_id": tool_use_id, "is_error": is_error}
+            "tool_result",
+            content,
+            {
+                "tool_use_id": tool_use_id,
+                "is_error": is_error,
+                "audit": {
+                    "tool_use_id": tool_use_id,
+                    "result": content,
+                    "is_error": is_error,
+                },
+            },
         )
 
     def record_turn_complete(self, finish_reason: str) -> int:
@@ -170,6 +209,8 @@ class ContextRuntime:
             best_id = scored[0][1]
             if best_id == active_topic_id:
                 return RouteDecision("patch", topic_id=best_id)
+            if active_topic_id and scored[0][0] < 2:
+                return RouteDecision("keep", topic_id=active_topic_id)
             return RouteDecision("switch", topic_id=best_id)
         if active_topic_id:
             return RouteDecision("keep", topic_id=active_topic_id)
@@ -207,16 +248,22 @@ class ContextRuntime:
             last_event_id=last_event_id,
         )
 
-    @staticmethod
-    def _score(user_text: str, topic: Topic) -> int:
-        query = _tokens(user_text)
-        haystack = _tokens(f"{topic.title} {topic.summary}")
-        return len(query & haystack)
+    def _score(self, user_text: str, topic: Topic) -> int:
+        packet = self.store.load_packet(topic.id)
+        query = _features(user_text)
+        title = _features(topic.title)
+        summary = _features(topic.summary)
+        packet_features = _features(_packet_text(packet))
+        return (
+            _overlap_score(query, title) * 3
+            + _overlap_score(query, summary) * 2
+            + _overlap_score(query, packet_features)
+        )
 
 
 def _tokens(text: str) -> set[str]:
     stop = {"the", "and", "for", "with", "how", "what", "should", "please"}
-    return {t for t in re.findall(r"[a-z0-9]+", text.lower()) if t not in stop}
+    return set(_features(text).keys()) - stop
 
 
 def _title_from_text(text: str) -> str:
@@ -224,3 +271,62 @@ def _title_from_text(text: str) -> str:
     if not tokens:
         return "general"
     return " ".join(tokens[:4])
+
+
+def _features(text: str) -> dict[str, int]:
+    features: dict[str, int] = {}
+    for token in re.findall(r"[a-z0-9]+", text.lower()):
+        if token not in {"the", "and", "for", "with", "how", "what", "should", "please"}:
+            features[token] = features.get(token, 0) + 1
+    for seq in re.findall(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]+", text):
+        for item in _cjk_ngrams(seq):
+            features[item] = features.get(item, 0) + 1
+    return features
+
+
+def _cjk_ngrams(seq: str) -> list[str]:
+    grams: list[str] = []
+    if len(seq) <= 4:
+        grams.append(seq)
+    for n in (2, 3):
+        if len(seq) >= n:
+            grams.extend(seq[idx: idx + n] for idx in range(len(seq) - n + 1))
+    return grams
+
+
+def _overlap_score(query: dict[str, int], haystack: dict[str, int]) -> int:
+    return sum(min(count, haystack.get(token, 0)) for token, count in query.items())
+
+
+def _packet_text(packet: ContextPacket | None) -> str:
+    if packet is None:
+        return ""
+    parts = [packet.summary, *packet.decisions, *packet.open_questions, *packet.next_actions]
+    parts.extend(packet.related_files)
+    parts.extend(packet.related_topics)
+    parts.extend(packet.global_memory)
+    return " ".join(parts)
+
+
+def _image_audit(image: ImageBlock) -> dict[str, Any]:
+    return {
+        "media_type": image.media_type,
+        "base64_length": len(image.data),
+        "sha256": hashlib.sha256(image.data.encode("utf-8")).hexdigest(),
+    }
+
+
+def _tool_call_payload(
+    content: str,
+    tool_use_id: str | None,
+    params: dict[str, Any] | None,
+) -> dict[str, Any]:
+    parsed: dict[str, Any] = {}
+    try:
+        parsed = dict(json.loads(content or "{}"))
+    except Exception:
+        parsed = {}
+    return {
+        "tool_use_id": tool_use_id or parsed.get("tool_use_id", ""),
+        "params": params if params is not None else parsed.get("params", {}),
+    }

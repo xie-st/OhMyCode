@@ -158,16 +158,25 @@ merge_configs(base, override) -> dict  # scalars overridden, arrays concatenated
 
 ```python
 runtime = ContextRuntime.for_cwd(cwd)
-event_id = runtime.record_user_message(expanded_input)
+event_id = runtime.record_user_message(
+    expanded_input,
+    raw_content=user_input,
+    image_blocks=image_blocks,
+    ref_warnings=ref_warnings,
+)
 prepared = runtime.prepare_for_turn(expanded_input, base_system_prompt, event_id)
 system_prompt = apply_context_projection(conv, runtime, prepared, base_system_prompt)
-await render_stream(conv, system_prompt_override=system_prompt)
+await render_stream(
+    conv,
+    system_prompt_override=system_prompt,
+    allow_blocking_compression=False,
+)
 ```
 
 Important methods:
 
-- `record_user_message()` / `record_assistant_message()` / `record_tool_call()` / `record_tool_result()` / `record_turn_complete()` append durable timeline events.
-- `prepare_for_turn()` returns `PreparedContext(system_prompt, packet, route)`.
+- `record_user_message()` / `record_assistant_message()` / `record_tool_call()` / `record_tool_result()` / `record_turn_complete()` append durable timeline events. User/tool events keep canonical `content` plus `metadata.audit` for raw input, image hashes, and replayable tool payloads.
+- `prepare_for_turn()` returns `PreparedContext(system_prompt, packet, route)`. Routing is local and deterministic: Latin tokens plus CJK n-grams scored against topic title, summary, and packet text. It is not an embedding or LLM router.
 - `request_curator_run()` coalesces concurrent requests and re-runs once if work arrived while the previous curator pass was active.
 - `request_topic_compression()` does the same per topic for lazy compression caches.
 - `switch_topic()` backs `/context switch <topic_id>` and records a `context_correction` event.
@@ -188,13 +197,23 @@ JSONL + SQLite persistence for long-term context:
 - `topic_compression_cache`: derived compressed messages plus `compressed_until_event_id`
 - `curator_state`: active topic and curator processed-event marker
 
+`save_topic_slices()` is a full replacement operation. `merge_topic_slices()` is the default curator path and preserves existing non-overlapping ranges while merging overlapping or adjacent ranges.
+
 ## context/curator.py
 
-`ContextCurator` reads events after `last_processed_event_id`, calls a curator function, parses compact JSON, and applies topic/packet/slice patches. `build_provider_curate_fn(provider, model)` creates a provider-backed curator function using `stream_to_text()`.
+`ContextCurator` reads events after `last_processed_event_id`, calls a curator function, parses compact JSON, and applies topic/packet/slice patches. Curator `topic_slices` default to `topic_slices_mode="merge"`; `replace` is reserved for explicit rebuilds. `build_provider_curate_fn(provider, model)` creates a provider-backed curator function using `stream_to_text()`.
 
 ## context/projection.py
 
 `build_topic_projection()` reconstructs the virtual topic window sent to the foreground model. Active topic slices become real `Message` objects; related topic packets are rendered into the system prompt but their transcripts are not injected by default. If a topic compression cache exists, projection uses cached compressed messages plus raw events after `compressed_until_event_id`.
+
+Diagnostic rule: judge projection quality by semantic alignment, not by the mere presence of a packet. A projected context is expected to show the current project root, current active topic, relevant packet fields, and relevant topic slices. If it shows a stale topic such as an earlier setup/debugging exchange, the projection plumbing is present but routing or active-topic state needs correction.
+
+Common corrections:
+
+- Start `ohmycode` from the actual repository root so `ContextRuntime.for_cwd(cwd)` uses the intended project slug.
+- Use `/context topics` to inspect topic ids and `/context switch <topic_id>` to move the REPL to the right hidden topic.
+- Use `/context rebuild` when derived topic/packet/slice state is stale or inconsistent with the JSONL event log.
 
 ## context/compression.py
 
@@ -202,4 +221,4 @@ JSONL + SQLite persistence for long-term context:
 
 ## core/loop.py per-turn system prompt
 
-`ConversationLoop.run_turn(system_prompt_override=None)` uses the override for both compression accounting and `provider.stream(system=...)`. `_system_prompt` remains the base prompt built during initialization for backwards compatibility and `/status`.
+`ConversationLoop.run_turn(system_prompt_override=None, allow_blocking_compression=True)` uses the override for both compression accounting and `provider.stream(system=...)`. Long-term context REPL turns pass `allow_blocking_compression=False`, so foreground compression only uses cheap snipping while topic-level lazy compression remains asynchronous. `_system_prompt` remains the base prompt built during initialization for backwards compatibility and `/status`.

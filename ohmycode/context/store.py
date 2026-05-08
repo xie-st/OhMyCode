@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -135,6 +136,11 @@ class ContextStore:
                     "VALUES (?, ?, ?, ?)",
                     (topic_id, start, end, _now()),
                 )
+
+    def merge_topic_slices(self, topic_id: str, ranges: list[tuple[int, int]]) -> None:
+        current = [(s.start_event_id, s.end_event_id) for s in self.list_topic_slices(topic_id)]
+        merged = _merge_ranges(current + ranges)
+        self.save_topic_slices(topic_id, merged)
 
     def list_topic_slices(self, topic_id: str) -> list[TopicSlice]:
         with self._connect() as conn:
@@ -408,4 +414,23 @@ def _event_shard(created_at: str) -> str:
 
 def _topic_id(title: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")
-    return f"topic_{slug or 'default'}"
+    if slug:
+        return f"topic_{slug}"
+    if not title.strip():
+        return "topic_default"
+    digest = hashlib.sha1(title.encode("utf-8")).hexdigest()[:12]
+    return f"topic_{digest}"
+
+
+def _merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    valid = sorted((start, end) for start, end in ranges if start > 0 and end >= start)
+    if not valid:
+        return []
+    merged = [valid[0]]
+    for start, end in valid[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end + 1:
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+    return merged

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from ohmycode.context.runtime import ContextRuntime
 from ohmycode.context.store import ContextStore
+from ohmycode.core.messages import ImageBlock
 
 
 def _runtime(name: str) -> ContextRuntime:
@@ -74,6 +75,109 @@ def test_runtime_reports_ambiguous_topic_candidates():
 
     assert prepared.route.action == "ambiguous"
     assert len(prepared.route.candidates) == 2
+
+
+def test_runtime_routes_chinese_query_to_chinese_topic():
+    runtime = _runtime("runtime_chinese_route")
+    runtime.store.create_topic("agent runtime", summary="tool loop provider stream")
+    chinese_topic = runtime.store.create_topic("长期上下文", summary="单窗口 话题 投影")
+    runtime.store.set_state("active_topic_id", "topic_agent_runtime")
+
+    event_id = runtime.record_user_message("我们继续聊长期上下文和话题投影")
+    prepared = runtime.prepare_for_turn(
+        "我们继续聊长期上下文和话题投影",
+        "base",
+        event_id,
+    )
+
+    assert prepared.route.action == "switch"
+    assert prepared.packet.topic_id == chinese_topic
+
+
+def test_runtime_routes_mixed_language_query_to_mixed_topic():
+    runtime = _runtime("runtime_mixed_route")
+    runtime.store.create_topic("cli bugfix", summary="prompt rendering")
+    mixed_topic = runtime.store.create_topic(
+        "single window context",
+        summary="话题 投影 topic slices",
+    )
+    runtime.store.set_state("active_topic_id", "topic_cli_bugfix")
+
+    event_id = runtime.record_user_message("继续 context 里的话题投影")
+    prepared = runtime.prepare_for_turn("继续 context 里的话题投影", "base", event_id)
+
+    assert prepared.route.action == "switch"
+    assert prepared.packet.topic_id == mixed_topic
+
+
+def test_runtime_keeps_ambiguous_chinese_candidates_ambiguous():
+    runtime = _runtime("runtime_chinese_ambiguous")
+    runtime.store.create_topic("上下文缓存", summary="话题 投影")
+    runtime.store.create_topic("上下文记忆", summary="话题 投影")
+
+    event_id = runtime.record_user_message("上下文话题投影")
+    prepared = runtime.prepare_for_turn("上下文话题投影", "base", event_id)
+
+    assert prepared.route.action == "ambiguous"
+    assert len(prepared.route.candidates) == 2
+
+
+def test_runtime_chinese_topic_ids_do_not_collapse_to_default():
+    runtime = _runtime("runtime_chinese_ids")
+
+    first = runtime.store.create_topic("长期上下文")
+    second = runtime.store.create_topic("话题投影")
+
+    assert first != second
+    assert first != "topic_default"
+    assert second != "topic_default"
+
+
+def test_record_user_message_stores_audit_metadata_without_image_data():
+    runtime = _runtime("runtime_user_audit")
+    image = ImageBlock(media_type="image/png", data="YWJjZA==")
+
+    runtime.record_user_message(
+        "expanded [image: sample.png]",
+        raw_content="@sample.png",
+        image_blocks=[image],
+        ref_warnings=["warn"],
+    )
+
+    event = runtime.store.list_events_after(0)[0]
+    audit = event.metadata["audit"]
+    assert event.content == "expanded [image: sample.png]"
+    assert audit["raw_content"] == "@sample.png"
+    assert audit["expanded_content"] == "expanded [image: sample.png]"
+    assert audit["ref_warnings"] == ["warn"]
+    assert audit["images"][0]["media_type"] == "image/png"
+    assert audit["images"][0]["base64_length"] == len("YWJjZA==")
+    assert "sha256" in audit["images"][0]
+    assert "data" not in audit["images"][0]
+
+
+def test_record_tool_events_store_replayable_audit_payloads():
+    runtime = _runtime("runtime_tool_audit")
+
+    runtime.record_tool_call(
+        "bash",
+        '{"tool_use_id": "abc", "params": {"command": "echo hi"}}',
+        tool_use_id="abc",
+        params={"command": "echo hi"},
+    )
+    runtime.record_tool_result("abc", "hi", False)
+
+    call, result = runtime.store.list_events_after(0)
+    assert call.metadata["audit"] == {
+        "tool_use_id": "abc",
+        "tool_name": "bash",
+        "params": {"command": "echo hi"},
+    }
+    assert result.metadata["audit"] == {
+        "tool_use_id": "abc",
+        "result": "hi",
+        "is_error": False,
+    }
 
 
 def test_runtime_coalesces_topic_compression_tasks():

@@ -147,6 +147,7 @@ class ConversationLoop:
     async def run_turn(
         self,
         system_prompt_override: str | None = None,
+        allow_blocking_compression: bool = True,
     ) -> AsyncIterator[StreamEvent]:
         """Run one conversation turn (may include multiple tool round-trips).
 
@@ -183,7 +184,11 @@ class ConversationLoop:
             # ── Context compression (if needed) ────────────────────────────────
             try:
                 self.messages = await self.context_mgr.maybe_compress(
-                    self.messages, turn_system_prompt, self._provider, self.config.model
+                    self.messages,
+                    turn_system_prompt,
+                    self._provider,
+                    self.config.model,
+                    allow_llm=allow_blocking_compression,
                 )
             except RuntimeError:
                 yield TurnComplete(finish_reason="error", usage=TokenUsage(0, 0, 0))

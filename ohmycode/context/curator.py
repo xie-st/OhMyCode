@@ -17,8 +17,8 @@ CurateFn = Callable[..., Awaitable[str]]
 CURATOR_SYSTEM = """You are OhMyCode's background context curator.
 Read recent append-only events and existing topic workspaces. Return compact JSON only.
 Use this shape:
-{"action":"keep|patch|rebuild|new_topic","topic":{"id":"","title":"","summary":"","status":""},"packet_patch":{"summary":"","decisions":[],"open_questions":[],"next_actions":[],"related_files":[],"related_topics":[],"global_memory":[]}}
-Prefer small patches. Do not include markdown."""
+{"action":"keep|patch|rebuild|new_topic","topic":{"id":"","title":"","summary":"","status":""},"packet_patch":{"summary":"","decisions":[],"open_questions":[],"next_actions":[],"related_files":[],"related_topics":[],"global_memory":[]},"topic_slices_mode":"merge|replace","topic_slices":[{"topic_id":"","start_event_id":1,"end_event_id":2}]}
+topic_slices marks raw event ranges owned by a topic. Default topic_slices_mode is "merge"; use "replace" only when rebuilding a topic's complete slice set. Prefer small patches. Do not include markdown."""
 
 
 @dataclass
@@ -94,8 +94,12 @@ class ContextCurator:
             start = int(item.get("start_event_id", 0) or 0)
             end = int(item.get("end_event_id", 0) or 0)
             slices_by_topic.setdefault(slice_topic_id, []).append((start, end))
+        mode = data.get("topic_slices_mode") or "merge"
         for slice_topic_id, ranges in slices_by_topic.items():
-            self.store.save_topic_slices(slice_topic_id, ranges)
+            if mode == "replace":
+                self.store.save_topic_slices(slice_topic_id, ranges)
+            else:
+                self.store.merge_topic_slices(slice_topic_id, ranges)
 
 
 def build_provider_curate_fn(provider, model: str) -> CurateFn:
