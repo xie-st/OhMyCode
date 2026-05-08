@@ -7,11 +7,15 @@ agent's ``StreamEvent`` stream without the kernel knowing about them.
 concrete renderers do not have to write the ``isinstance`` ladder.
 Override the ``on_<event>`` hook for whichever events you care about and
 ignore the rest.
+
+``drive_renderer`` runs the lifecycle (``on_turn_start`` →
+``on_event`` per yielded event → ``on_turn_end``) against an async
+event source.
 """
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import AsyncIterator, Protocol, runtime_checkable
 
 from ohmycode.core.messages import (
     StreamEvent,
@@ -38,7 +42,18 @@ class DispatchingRenderer:
     ``on_tool_call_streaming``, ``on_tool_call_result``, ``on_sub_agent_tool_use``,
     ``on_sub_agent_done``, or ``on_turn_complete``. Anything you do not override
     is a no-op.
+
+    For per-turn setup and teardown that does not belong to any specific
+    event, override ``on_turn_start`` (called once before the first event)
+    and ``on_turn_end`` (called once after the last, even on error).
     """
+
+    # ── Lifecycle hooks ──────────────────────────────────────────────────────
+
+    async def on_turn_start(self) -> None: ...
+    async def on_turn_end(self) -> None: ...
+
+    # ── Per-event dispatch ───────────────────────────────────────────────────
 
     async def on_event(self, event: StreamEvent) -> None:
         if isinstance(event, TextChunk):
@@ -68,3 +83,20 @@ class DispatchingRenderer:
     async def on_sub_agent_tool_use(self, event: SubAgentToolUse) -> None: ...
     async def on_sub_agent_done(self, event: SubAgentDone) -> None: ...
     async def on_turn_complete(self, event: TurnComplete) -> None: ...
+
+
+async def drive_renderer(
+    renderer: "DispatchingRenderer",
+    events: AsyncIterator[StreamEvent],
+) -> None:
+    """Run the ``on_turn_start`` → ``on_event`` × N → ``on_turn_end`` lifecycle.
+
+    ``on_turn_end`` is invoked even when the iterator raises so renderers
+    can clean up spinners/boxes/cursor state.
+    """
+    await renderer.on_turn_start()
+    try:
+        async for event in events:
+            await renderer.on_event(event)
+    finally:
+        await renderer.on_turn_end()

@@ -1,4 +1,4 @@
-"""Stream rendering: ScrollingBox family and render_stream."""
+"""Stream rendering: ScrollingBox family and the Rich-backed renderer."""
 
 from __future__ import annotations
 
@@ -12,15 +12,17 @@ from rich.markup import escape
 
 from ohmycode.core.loop import ConversationLoop
 from ohmycode.core.messages import (
+    StreamEvent,
     SubAgentDone,
     SubAgentToolUse,
     TextChunk,
     ThinkingChunk,
-    ToolCallStreaming,
-    ToolCallStart,
     ToolCallResult,
+    ToolCallStart,
+    ToolCallStreaming,
     TurnComplete,
 )
+from ohmycode.core.renderer import DispatchingRenderer, drive_renderer
 
 console = Console()
 
@@ -175,138 +177,173 @@ class SubAgentBox(ScrollingBox):
         self.clear()
 
 
+class RichRenderer(DispatchingRenderer):
+    """Rich/Console-backed renderer for the interactive REPL.
+
+    Stateful: owns the spinner lifecycle, the thinking/sub-agent boxes,
+    and the per-turn formatting context (was the last thing text? a
+    tool? how many tools?). All scratch state is reset in
+    ``on_turn_start`` so a single instance can drive multiple turns.
+    """
+
+    def __init__(self, conv: ConversationLoop) -> None:
+        self.conv = conv
+        self.finish_reason: str = "stop"
+        self._t_start: float = 0.0
+        self._spinner_task: "asyncio.Task | None" = None
+        self._tool_spinner_task: "asyncio.Task | None" = None
+        self._box: ThinkingBox | None = None
+        self._sub_agent_box: SubAgentBox | None = None
+        self._text_printed: bool = False
+        self._tool_count: int = 0
+        self._first_event_seen: bool = False
+
+    # ── Lifecycle ────────────────────────────────────────────────────────────
+
+    async def on_turn_start(self) -> None:
+        self.finish_reason = "stop"
+        self._t_start = time.monotonic()
+        self._spinner_task = asyncio.create_task(
+            _spinner_task("Waiting...", self._t_start)
+        )
+        self._tool_spinner_task = None
+        self._box = ThinkingBox()
+        self._sub_agent_box = None
+        self._text_printed = False
+        self._tool_count = 0
+        self._first_event_seen = False
+
+    async def on_turn_end(self) -> None:
+        if self._box is not None and self._box.visible:
+            self._box.clear()
+        await _cancel_spinner(self._spinner_task)
+        await _cancel_spinner(self._tool_spinner_task)
+
+    # ── First-event side effect ──────────────────────────────────────────────
+
+    async def on_event(self, event: StreamEvent) -> None:
+        if not self._first_event_seen:
+            self._first_event_seen = True
+            await _cancel_spinner(self._spinner_task)
+            self._spinner_task = None
+            if self.conv.think:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+        await super().on_event(event)
+
+    # ── Per-event hooks ──────────────────────────────────────────────────────
+
+    async def on_sub_agent_tool_use(self, event: SubAgentToolUse) -> None:
+        if not _is_interactive():
+            return
+        if self._sub_agent_box is None:
+            self._sub_agent_box = SubAgentBox()
+        self._sub_agent_box.push_tool(event.tool_name)
+
+    async def on_sub_agent_done(self, event: SubAgentDone) -> None:
+        if self._sub_agent_box is None:
+            return
+        if event.is_error:
+            self._sub_agent_box.clear()
+        else:
+            self._sub_agent_box.finish()
+        self._sub_agent_box = None
+
+    async def on_tool_call_streaming(self, event: ToolCallStreaming) -> None:
+        if self._tool_spinner_task is not None and not self._tool_spinner_task.done():
+            return
+        if self._text_printed:
+            console.print()
+            self._text_printed = False
+        self._tool_spinner_task = asyncio.create_task(
+            _spinner_task("Preparing...", time.monotonic())
+        )
+
+    async def on_thinking(self, event: ThinkingChunk) -> None:
+        if self.conv.think and self._box is not None:
+            self._box.push(event.text)
+
+    async def on_text(self, event: TextChunk) -> None:
+        if self._box is not None and self._box.visible:
+            self._box.clear()
+        text = event.text
+        if not self._text_printed:
+            if self._tool_count > 0:
+                console.print(f"\n  [bold {ACCENT}]●[/] ", end="", highlight=False)
+            else:
+                console.print("  ", end="", highlight=False)
+        text = text.replace("\n", "\n    ")
+        console.print(text, end="", highlight=False)
+        self._text_printed = True
+
+    async def on_tool_call_start(self, event: ToolCallStart) -> None:
+        await _cancel_spinner(self._tool_spinner_task)
+        self._tool_spinner_task = None
+        if self._box is not None and self._box.visible:
+            self._box.clear()
+        if self._text_printed:
+            console.print()
+            self._text_printed = False
+        params_str = json.dumps(event.params, ensure_ascii=False)
+        if len(params_str) > 100:
+            params_str = params_str[:97] + "..."
+        console.print(
+            f"\n    [bold {ACCENT}]▸[/] [bold]{escape(event.tool_name)}[/]"
+            f"  [dim]{escape(params_str)}[/]",
+            highlight=False,
+        )
+        self._tool_count += 1
+
+    async def on_tool_call_result(self, event: ToolCallResult) -> None:
+        raw = event.result
+        max_lines = 10
+        lines = raw.splitlines()
+        if len(lines) > max_lines:
+            indented = "\n".join("    " + l for l in lines[:max_lines])
+            output = escape(indented) + f"\n    [dim]... ({len(lines)} lines total)[/dim]"
+        else:
+            body = raw
+            if len(body) > 500:
+                body = body[:497] + "..."
+            body = "\n".join("    " + l for l in body.splitlines())
+            output = escape(body)
+
+        if event.is_error:
+            console.print(f"    [red]✗[/] [red]{output}[/]", highlight=False)
+        else:
+            console.print(f"    [green]✓[/]\n[dim]{output}[/]", highlight=False)
+
+    async def on_turn_complete(self, event: TurnComplete) -> None:
+        self.finish_reason = event.finish_reason
+        if self._box is not None and self._box.visible:
+            self._box.clear()
+        if self._text_printed:
+            console.print()
+            self._text_printed = False
+        u = event.usage
+        elapsed = time.monotonic() - self._t_start
+        stats_parts: list[str] = []
+        if self._tool_count > 0:
+            stats_parts.append(
+                f"{self._tool_count} tool use{'s' if self._tool_count > 1 else ''}"
+            )
+        if u and u.total_tokens > 0:
+            stats_parts.append(f"{u.total_tokens:,} tokens")
+        stats_parts.append(f"{elapsed:.1f}s")
+        console.print(f"\n  [dim]{' · '.join(stats_parts)}[/dim]")
+        self._tool_count = 0
+
+
 async def render_stream(
     conv: ConversationLoop,
     system_prompt_override: str | None = None,
     allow_blocking_compression: bool = True,
 ) -> str:
-    """Consume run_turn() event stream, render to terminal, return finish_reason."""
-    finish_reason = "stop"
-    text_printed = False
-    tool_count = 0
-
-    thinking = True
-    t_start = time.monotonic()
-    spinner_task = asyncio.create_task(_spinner_task("Waiting...", t_start))
-    tool_spinner_task: asyncio.Task | None = None
-    box = ThinkingBox()
-    sub_agent_box: SubAgentBox | None = None
-
-    try:
-        async for event in conv.run_turn(
-            system_prompt_override=system_prompt_override,
-            allow_blocking_compression=allow_blocking_compression,
-        ):
-            if thinking:
-                thinking = False
-                await _cancel_spinner(spinner_task)
-                if conv.think:
-                    sys.stdout.write("\n")
-                    sys.stdout.flush()
-
-            if isinstance(event, SubAgentToolUse):
-                if _is_interactive():
-                    if sub_agent_box is None:
-                        sub_agent_box = SubAgentBox()
-                    sub_agent_box.push_tool(event.tool_name)
-                continue
-
-            if isinstance(event, SubAgentDone):
-                if sub_agent_box is not None:
-                    if event.is_error:
-                        sub_agent_box.clear()
-                    else:
-                        sub_agent_box.finish()
-                    sub_agent_box = None
-                continue
-
-            if isinstance(event, ToolCallStreaming):
-                if tool_spinner_task is None or tool_spinner_task.done():
-                    if text_printed:
-                        console.print()
-                        text_printed = False
-                    tool_spinner_task = asyncio.create_task(
-                        _spinner_task("Preparing...", time.monotonic())
-                    )
-                continue
-
-            if isinstance(event, ThinkingChunk):
-                if conv.think:
-                    box.push(event.text)
-                continue
-
-            if isinstance(event, TextChunk):
-                if box.visible:
-                    box.clear()
-                text = event.text
-                if not text_printed:
-                    if tool_count > 0:
-                        console.print(f"\n  [bold {ACCENT}]●[/] ", end="", highlight=False)
-                    else:
-                        console.print("  ", end="", highlight=False)
-                text = text.replace("\n", "\n    ")
-                console.print(text, end="", highlight=False)
-                text_printed = True
-
-            elif isinstance(event, ToolCallStart):
-                await _cancel_spinner(tool_spinner_task)
-                tool_spinner_task = None
-                if box.visible:
-                    box.clear()
-                if text_printed:
-                    console.print()
-                    text_printed = False
-                tool_display = event.tool_name
-                params_str = json.dumps(event.params, ensure_ascii=False)
-                if len(params_str) > 100:
-                    params_str = params_str[:97] + "..."
-                console.print(
-                    f"\n    [bold {ACCENT}]▸[/] [bold]{escape(tool_display)}[/]  [dim]{escape(params_str)}[/]",
-                    highlight=False,
-                )
-                tool_count += 1
-
-            elif isinstance(event, ToolCallResult):
-                raw = event.result
-                max_lines = 10
-                lines = raw.splitlines()
-                if len(lines) > max_lines:
-                    indented = "\n".join("    " + l for l in lines[:max_lines])
-                    output = escape(indented) + f"\n    [dim]... ({len(lines)} lines total)[/dim]"
-                else:
-                    body = raw
-                    if len(body) > 500:
-                        body = body[:497] + "..."
-                    body = "\n".join("    " + l for l in body.splitlines())
-                    output = escape(body)
-
-                if event.is_error:
-                    console.print(f"    [red]✗[/] [red]{output}[/]", highlight=False)
-                else:
-                    console.print(f"    [green]✓[/]\n[dim]{output}[/]", highlight=False)
-
-            elif isinstance(event, TurnComplete):
-                finish_reason = event.finish_reason
-                if box.visible:
-                    box.clear()
-                if text_printed:
-                    console.print()
-                    text_printed = False
-                u = event.usage
-                elapsed = time.monotonic() - t_start
-                stats_parts = []
-                if tool_count > 0:
-                    stats_parts.append(f"{tool_count} tool use{'s' if tool_count > 1 else ''}")
-                if u.total_tokens > 0:
-                    stats_parts.append(f"{u.total_tokens:,} tokens")
-                stats_parts.append(f"{elapsed:.1f}s")
-                console.print(f"\n  [dim]{' · '.join(stats_parts)}[/dim]")
-                tool_count = 0
-
-    finally:
-        if box.visible:
-            box.clear()
-        await _cancel_spinner(spinner_task)
-        await _cancel_spinner(tool_spinner_task)
-
-    return finish_reason
+    """Drive a ``RichRenderer`` against ``conv.run_turn()`` and return finish_reason."""
+    renderer = RichRenderer(conv)
+    events = conv.run_turn(
+        system_prompt_override=system_prompt_override,
+        allow_blocking_compression=allow_blocking_compression,
+    )
+    await drive_renderer(renderer, events)
+    return renderer.finish_reason
