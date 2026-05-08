@@ -137,6 +137,66 @@ async def test_curator_ignores_invalid_json_without_marking_processed():
 
 
 @pytest.mark.asyncio
+async def test_curator_self_heals_when_high_water_mark_exceeds_max_event(capfd):
+    """If last_processed_event_id is past the end of the event log (e.g.
+    after external truncation or a project-slug collision), the curator
+    should reset its mark to 0 and reprocess history rather than
+    perpetually returning ``no_events``."""
+    store = _store("curator_self_heal")
+    # Two real events (IDs 1 and 2)
+    store.append_event("user_message", "hi")
+    store.append_event("assistant_message", "hello")
+    # Stale curator state: claims to have processed up to 282
+    store.set_last_processed_event_id(282)
+
+    topic_id = store.create_topic("test topic", summary="t")
+    store.set_state("active_topic_id", topic_id)
+
+    async def fake_curate(*args, **kwargs):
+        return '{"action":"keep","topic":{"id":"%s"}}' % topic_id
+
+    result = await ContextCurator(store, fake_curate).run_once()
+
+    # After self-heal + reprocess, the run completes normally and the mark
+    # is reset to the highest real event ID (2).
+    assert result.applied is True
+    assert store.get_last_processed_event_id() == 2
+
+    # The diagnostic warning is printed to stderr.
+    captured = capfd.readouterr()
+    assert "exceeds max_event_id" in captured.err
+
+
+@pytest.mark.asyncio
+async def test_curator_does_not_self_heal_when_mark_is_zero():
+    """A fresh store has last_processed_event_id=0 with no events. That is
+    the *normal* empty state, not an inconsistency — do not log a warning,
+    do not reset, just return no_events as before."""
+    store = _store("curator_fresh_empty")
+    # No events, no curator state set (defaults to 0)
+
+    async def fake_curate(*args, **kwargs):
+        raise AssertionError("curate_fn should not be called when no events")
+
+    result = await ContextCurator(store, fake_curate).run_once()
+    assert result.applied is False
+    assert result.reason == "no_events"
+
+
+def test_get_max_event_id_returns_zero_for_empty_store():
+    store = _store("max_event_empty")
+    assert store.get_max_event_id() == 0
+
+
+def test_get_max_event_id_returns_highest_id():
+    store = _store("max_event_populated")
+    store.append_event("user_message", "a")
+    store.append_event("assistant_message", "b")
+    store.append_event("tool_call", "c")
+    assert store.get_max_event_id() == 3
+
+
+@pytest.mark.asyncio
 async def test_runtime_coalesces_curator_tasks():
     from ohmycode.context.runtime import ContextRuntime
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
@@ -37,6 +38,23 @@ class ContextCurator:
     async def run_once(self) -> CuratorResult:
         last_id = self.store.get_last_processed_event_id()
         events = self.store.list_events_after(last_id)
+
+        # Self-heal: if the curator's high-water mark is past the end of the
+        # event log (e.g. external truncation, project-slug collision, or
+        # manual db edit), the events list will always be empty. Reset and
+        # let this run reprocess history from the beginning.
+        if not events and last_id > 0:
+            max_event = self.store.get_max_event_id()
+            if last_id > max_event:
+                print(
+                    f"[curator] last_processed_event_id={last_id} exceeds "
+                    f"max_event_id={max_event}; resetting to 0",
+                    file=sys.stderr,
+                )
+                self.store.set_last_processed_event_id(0)
+                last_id = 0
+                events = self.store.list_events_after(0)
+
         if not events:
             return CuratorResult(applied=False, reason="no_events")
         try:

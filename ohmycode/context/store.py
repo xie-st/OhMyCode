@@ -286,6 +286,17 @@ class ContextStore:
         value = self.get_state("last_processed_event_id", "0")
         return int(value or "0")
 
+    def get_max_event_id(self) -> int:
+        """Return the highest event ID currently stored, or 0 if empty."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(event_id), 0) FROM event_index"
+            ).fetchone()
+            old = conn.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM events"
+            ).fetchone()
+        return max(int(row[0]), int(old[0]))
+
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
 

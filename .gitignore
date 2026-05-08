@@ -57,3 +57,14 @@ log/sessions/*.jsonl
 # Local reference materials
 reference/
 docs/superpowers/
+
+# Test fixtures (created by tests/context/test_curator.py and friends)
+testtmp-manual/
+testtmp-pytest/
+
+# Local OhMyCode runtime artifacts
+current_packet.txt
+workspace/
+
+# Per-machine Claude Code settings
+.claude/settings.local.json
