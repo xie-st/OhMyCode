@@ -155,6 +155,19 @@ async def handle_slash_command(
                 repl_print(f"[dim]Mode switched to: {new_mode}[/dim]")
         return "continue"
 
+    if cmd == "/model":
+        return _handle_model_command(
+            args=args,
+            config=config,
+            config_overrides=config_overrides,
+            confirm_tool_call=confirm_tool_call,
+            get_current_mode=get_current_mode,
+            set_current_mode=set_current_mode,
+            set_config=set_config,
+            set_conv=set_conv,
+            repl_print=repl_print,
+        )
+
     if cmd == "/status":
         status = conv.get_status_snapshot()
         repl_print()
@@ -259,8 +272,90 @@ async def handle_slash_command(
             repl_print("\n[yellow](Interrupted — partial reply saved to history. Continue or /exit)[/yellow]")
     else:
         repl_print(f"[red]Unknown command: {cmd}[/red]")
-        repl_print("[dim]Available: /exit /clear /new /mode /status /context /memory /skills[/dim]")
+        repl_print("[dim]Available: /exit /clear /new /mode /model /status /context /memory /skills[/dim]")
     return "continue"
+
+
+def _handle_model_command(
+    args: str,
+    config: OhMyCodeConfig,
+    config_overrides: dict[str, Any],
+    confirm_tool_call: Callable,
+    get_current_mode: Callable[[], str],
+    set_current_mode: Callable[[str], None],
+    set_config: Callable[[OhMyCodeConfig], None],
+    set_conv: Callable[[ConversationLoop], None],
+    repl_print: Callable,
+) -> str:
+    profile_name = args.strip()
+    if not profile_name:
+        _print_model_profiles(config, config_overrides, repl_print)
+        return "continue"
+
+    new_overrides = _profile_switch_overrides(config_overrides, profile_name, get_current_mode())
+    try:
+        new_config = load_config(new_overrides)
+    except ValueError as exc:
+        repl_print(f"[red]{exc}[/red]")
+        return "continue"
+    new_conv = ConversationLoop(config=new_config, confirm_fn=confirm_tool_call)
+    new_conv.initialize()
+    config_overrides.clear()
+    config_overrides.update(new_overrides)
+    set_current_mode(new_config.mode)
+    set_config(new_config)
+    set_conv(new_conv)
+    repl_print(
+        f"[dim]Model profile switched to {profile_name}: "
+        f"{new_config.provider} / {new_config.model}[/dim]"
+    )
+    return "continue"
+
+
+def _print_model_profiles(
+    config: OhMyCodeConfig,
+    config_overrides: dict[str, Any],
+    repl_print: Callable,
+) -> None:
+    try:
+        current = load_config(config_overrides)
+    except ValueError:
+        current = config
+    repl_print()
+    repl_print("  [bold]Model profiles[/]")
+    if not current.profiles:
+        repl_print("[dim]No profiles configured. Usage: /model <profile>[/dim]")
+        repl_print()
+        return
+    active = current.active_profile
+    for name, profile in sorted(current.profiles.items()):
+        marker = "*" if name == active else " "
+        provider = profile.get("provider", current.provider)
+        model = profile.get("model", current.model)
+        repl_print(f"    [cyan]{marker} {name}[/] [dim]{provider} / {model}[/]")
+    repl_print()
+
+
+def _profile_switch_overrides(
+    config_overrides: dict[str, Any],
+    profile_name: str,
+    current_mode: str,
+) -> dict[str, Any]:
+    new_overrides = dict(config_overrides)
+    for key in (
+        "provider",
+        "model",
+        "api_key",
+        "base_url",
+        "auth_token",
+        "azure_endpoint",
+        "azure_api_version",
+    ):
+        new_overrides.pop(key, None)
+    new_overrides["profile"] = profile_name
+    if current_mode:
+        new_overrides["mode"] = current_mode
+    return new_overrides
 
 
 def _handle_context_command(

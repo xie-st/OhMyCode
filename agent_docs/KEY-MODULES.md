@@ -152,6 +152,8 @@ load_config(cli_overrides) -> OhMyCodeConfig
 merge_configs(base, override) -> dict  # scalars overridden, arrays concatenated, objects deep-merged
 ```
 
+Named model profiles are configured with `profiles` and `active_profile`. `load_config()` merges defaults, user config, and project config, then applies the selected profile, then applies explicit CLI overrides. CLI `--profile <name>` selects a profile for that run; `--model`, `--provider`, `--api-key`, and similar scalar CLI flags still win over profile values. The REPL `/model <name>` command rebuilds the current `ConversationLoop` with the selected profile while preserving the current permission mode.
+
 ## context/runtime.py
 
 `ContextRuntime` is owned by the REPL, not by `ConversationLoop`. It records append-only events, chooses the active topic, returns a cached `ContextPacket`, and schedules coalesced curator/compression tasks.

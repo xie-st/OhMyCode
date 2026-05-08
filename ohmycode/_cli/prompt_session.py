@@ -74,6 +74,7 @@ def build_prompt_session(
             "/clear": "Clear conversation",
             "/new": "Save current conversation and start fresh",
             "/mode": "Switch mode (default|auto|plan)",
+            "/model": "Switch model profile",
             "/status": "Show context and session status",
             "/context": "Show or adjust long-term context",
             "/memory": "Manage memories",

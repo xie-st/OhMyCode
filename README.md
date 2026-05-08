@@ -94,7 +94,30 @@ Create `~/.ohmycode/config.json`:
 
 Config merges four layers: **system defaults** < **user** (`~/.ohmycode/`) < **project** (`.ohmycode/`) < **CLI args**.
 
-CLI overrides: `--provider`, `--model`, `--mode`, `--api-key`, `--base-url`.
+You can also define named model profiles:
+
+```json
+{
+  "active_profile": "deepseek",
+  "profiles": {
+    "deepseek": {
+      "provider": "openai",
+      "model": "deepseek-chat",
+      "api_key": "sk-...",
+      "base_url": "https://api.deepseek.com/v1"
+    },
+    "claude": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5",
+      "api_key": "sk-ant-..."
+    }
+  }
+}
+```
+
+Profile values apply after user/project config and before CLI overrides. In the REPL, use `/model` to list profiles and `/model <name>` to switch. For one-shot runs, use `--profile <name>`.
+
+CLI overrides: `--profile`, `--provider`, `--model`, `--mode`, `--api-key`, `--base-url`.
 
 <details>
 <summary>All config options</summary>
@@ -106,6 +129,8 @@ CLI overrides: `--provider`, `--model`, `--mode`, `--api-key`, `--base-url`.
 | `mode` | `"default"` | Permission mode |
 | `base_url` | `""` | API base URL |
 | `api_key` | `""` | API key |
+| `profiles` | `{}` | Named provider/model/API configs |
+| `active_profile` | `""` | Default profile name |
 | `azure_endpoint` | `""` | Azure endpoint |
 | `azure_api_version` | `"2024-02-01"` | Azure API version |
 | `max_turns` | `100` | Max conversation turns |

@@ -148,3 +148,100 @@ async def test_new_with_context_runtime_clears_short_term_only(tmp_path, monkeyp
     assert conv.auto_approved == {}
     assert runtime.store.get_state("active_topic_id") == topic_id
     set_conv.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_model_command_switches_to_named_profile(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    config_dir = tmp_path / ".ohmycode"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        """
+        {
+          "active_profile": "deepseek",
+          "profiles": {
+            "deepseek": {
+              "provider": "openai",
+              "model": "deepseek-chat",
+              "api_key": "deep-key",
+              "base_url": "https://api.deepseek.com/v1"
+            },
+            "claude": {
+              "provider": "anthropic",
+              "model": "claude-sonnet-4-5",
+              "api_key": "claude-key"
+            }
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    prints = []
+    set_config = Mock()
+    set_conv = Mock()
+    set_current_mode = Mock()
+
+    await handle_slash_command(
+        cmd="/model",
+        parts=["/model", "claude"],
+        raw_input="/model claude",
+        conv=_conv(),
+        config=OhMyCodeConfig(provider="openai", model="deepseek-chat", mode="auto"),
+        config_overrides={},
+        skills={},
+        resumed_filename=None,
+        repl_print=lambda *args, **kwargs: prints.append(" ".join(str(a) for a in args)),
+        get_current_mode=lambda: "auto",
+        set_current_mode=set_current_mode,
+        set_config=set_config,
+        set_conv=set_conv,
+    )
+
+    new_config = set_config.call_args.args[0]
+    new_conv = set_conv.call_args.args[0]
+    assert new_config.active_profile == "claude"
+    assert new_config.provider == "anthropic"
+    assert new_config.model == "claude-sonnet-4-5"
+    assert new_config.api_key == "claude-key"
+    assert new_conv.config is new_config
+    set_current_mode.assert_called_once_with("auto")
+    assert "claude" in "\n".join(prints)
+
+
+@pytest.mark.asyncio
+async def test_model_command_lists_profiles(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    config_dir = tmp_path / ".ohmycode"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        """
+        {
+          "active_profile": "deepseek",
+          "profiles": {
+            "deepseek": {"provider": "openai", "model": "deepseek-chat"},
+            "claude": {"provider": "anthropic", "model": "claude-sonnet-4-5"}
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    prints = []
+
+    await handle_slash_command(
+        cmd="/model",
+        parts=["/model"],
+        raw_input="/model",
+        conv=_conv(),
+        config=OhMyCodeConfig(provider="openai", model="deepseek-chat", mode="auto"),
+        config_overrides={},
+        skills={},
+        resumed_filename=None,
+        repl_print=lambda *args, **kwargs: prints.append(" ".join(str(a) for a in args)),
+    )
+
+    output = "\n".join(prints)
+    assert "deepseek" in output
+    assert "claude" in output
+    assert "deepseek-chat" in output

@@ -53,6 +53,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Model name (e.g. gpt-4o).",
     )
     parser.add_argument(
+        "--profile",
+        metavar="PROFILE",
+        help="Named model profile from config.json.",
+    )
+    parser.add_argument(
         "--mode",
         metavar="MODE",
         choices=list(MODES),
@@ -110,6 +115,7 @@ def run() -> int:
     config_overrides: dict[str, Any] = {
         "provider": args.provider,
         "model": args.model,
+        "profile": args.profile,
         "mode": args.mode,
         "api_key": args.api_key,
         "base_url": args.base_url,

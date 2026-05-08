@@ -94,3 +94,12 @@ def test_pt_console_renders_markup():
     # Should contain ANSI escape sequence, not literal "[cyan]"
     assert "[cyan]" not in output
     assert "hello" in output
+
+
+def test_parse_args_accepts_profile():
+    from ohmycode.cli import parse_args
+
+    args = parse_args(["--profile", "deepseek", "-p", "hello"])
+
+    assert args.profile == "deepseek"
+    assert args.prompt == "hello"

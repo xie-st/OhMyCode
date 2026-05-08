@@ -26,6 +26,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "base_url": "",
     "api_key": "",
     "auth_token": "",
+    "profiles": {},
+    "active_profile": "",
     "context_enabled": True,
     "context_visibility": "silent",
     "context_ambiguity_confirmation": True,
@@ -54,6 +56,8 @@ class OhMyCodeConfig(BaseModel):
     base_url: str = ""
     api_key: str = ""
     auth_token: str = ""
+    profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    active_profile: str = ""
     context_enabled: bool = True
     context_visibility: str = "silent"
     context_ambiguity_confirmation: bool = True
@@ -95,10 +99,27 @@ def load_config(cli_overrides: dict[str, Any]) -> OhMyCodeConfig:
     project_config = _read_json(Path.cwd() / ".ohmycode" / "config.json")
 
     cli_clean = {k: v for k, v in cli_overrides.items() if v is not None}
+    requested_profile = cli_clean.pop("profile", None)
 
     merged = DEFAULT_CONFIG.copy()
     merged = merge_configs(merged, user_config)
     merged = merge_configs(merged, project_config)
+    merged = _apply_profile(merged, requested_profile)
     merged = merge_configs(merged, cli_clean)
 
     return OhMyCodeConfig(**merged)
+
+
+def _apply_profile(config: dict[str, Any], requested_profile: str | None) -> dict[str, Any]:
+    profile_name = requested_profile or config.get("active_profile", "")
+    if not profile_name:
+        return config
+    profiles = config.get("profiles") or {}
+    if profile_name not in profiles:
+        available = ", ".join(sorted(profiles)) or "(none)"
+        raise ValueError(f"Unknown profile: {profile_name}. Available: {available}")
+    selected = profiles[profile_name]
+    merged = merge_configs(config, selected)
+    merged["active_profile"] = profile_name
+    merged["profiles"] = profiles
+    return merged
