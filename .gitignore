@@ -65,6 +65,7 @@ testtmp-pytest/
 # Local OhMyCode runtime artifacts
 current_packet.txt
 workspace/
+_check_*.py
 
 # Per-machine Claude Code settings
 .claude/settings.local.json
