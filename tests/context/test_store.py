@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import shutil
-import sqlite3
 from pathlib import Path
 
 from ohmycode.context.packet import ContextPacket
@@ -26,33 +25,6 @@ def test_store_initializes_sqlite_and_appends_events():
     events = store.list_events_after(0)
     assert [event.event_type for event in events] == ["user_message", "assistant_message"]
     assert events[0].metadata["source"] == "test"
-
-
-def test_store_mirrors_appended_events_to_sqlite_events_table():
-    db_path = _db_path("store_events_mirror")
-    store = ContextStore(db_path)
-
-    store.append_event("user_message", "hello", {"source": "test"})
-
-    with sqlite3.connect(db_path) as conn:
-        rows = conn.execute(
-            "SELECT id, type, content, metadata_json FROM events ORDER BY id"
-        ).fetchall()
-
-    assert rows == [(1, "user_message", "hello", '{"source": "test"}')]
-
-
-def test_store_backfills_sqlite_events_table_from_jsonl_index():
-    db_path = _db_path("store_events_backfill")
-    store = ContextStore(db_path)
-    store.append_event("user_message", "hello", {"source": "test"})
-    store.append_event("assistant_message", "hi")
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("DELETE FROM events")
-
-    reopened = ContextStore(db_path)
-
-    assert [event.content for event in reopened._list_sqlite_events_after(0)] == ["hello", "hi"]
 
 
 def test_store_keeps_events_append_only_when_topics_change():

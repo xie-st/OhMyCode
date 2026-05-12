@@ -59,7 +59,6 @@ class ContextStore:
         self.events_dir = self.db_path.parent / "events"
         self.events_dir.mkdir(parents=True, exist_ok=True)
         self._init_db()
-        self._backfill_sqlite_events_from_index()
 
     def append_event(
         self,
@@ -84,16 +83,6 @@ class ContextStore:
                 "INSERT OR REPLACE INTO event_index(event_id, shard, created_at) VALUES (?, ?, ?)",
                 (event_id, shard, created_at),
             )
-            self._upsert_sqlite_event(
-                conn,
-                ContextEvent(
-                    id=event_id,
-                    event_type=event_type,
-                    content=content,
-                    metadata=metadata or {},
-                    created_at=created_at,
-                ),
-            )
             conn.execute(
                 "INSERT OR REPLACE INTO curator_state(key, value) VALUES (?, ?)",
                 ("next_event_id", str(event_id + 1)),
@@ -102,9 +91,7 @@ class ContextStore:
 
     def list_events_after(self, event_id: int, limit: int = 100) -> list[ContextEvent]:
         rows = self._event_index_rows("event_id > ?", (event_id,), limit)
-        if rows:
-            return self._read_indexed_events(rows)
-        return self._list_sqlite_events_after(event_id, limit)
+        return self._read_indexed_events(rows)
 
     def list_events_range(self, start_event_id: int, end_event_id: int) -> list[ContextEvent]:
         rows = self._event_index_rows(
@@ -112,30 +99,7 @@ class ContextStore:
             (start_event_id, end_event_id),
             None,
         )
-        if rows:
-            return self._read_indexed_events(rows)
-        return [
-            e for e in self._list_sqlite_events_after(start_event_id - 1, end_event_id)
-            if e.id <= end_event_id
-        ]
-
-    def _list_sqlite_events_after(self, event_id: int, limit: int = 100) -> list[ContextEvent]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT id, type, content, metadata_json, created_at FROM events "
-                "WHERE id > ? ORDER BY id ASC LIMIT ?",
-                (event_id, limit),
-            ).fetchall()
-        return [
-            ContextEvent(
-                id=row[0],
-                event_type=row[1],
-                content=row[2],
-                metadata=json.loads(row[3] or "{}"),
-                created_at=row[4],
-            )
-            for row in rows
-        ]
+        return self._read_indexed_events(rows)
 
     def save_topic_slices(self, topic_id: str, ranges: list[tuple[int, int]]) -> None:
         valid = [(start, end) for start, end in ranges if start > 0 and end >= start]
@@ -303,10 +267,7 @@ class ContextStore:
             row = conn.execute(
                 "SELECT COALESCE(MAX(event_id), 0) FROM event_index"
             ).fetchone()
-            old = conn.execute(
-                "SELECT COALESCE(MAX(id), 0) FROM events"
-            ).fetchone()
-        return max(int(row[0]), int(old[0]))
+        return int(row[0])
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
@@ -315,13 +276,7 @@ class ContextStore:
         with self._connect() as conn:
             conn.executescript(
                 """
-                CREATE TABLE IF NOT EXISTS events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    type TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    metadata_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                );
+                DROP TABLE IF EXISTS events;
                 CREATE TABLE IF NOT EXISTS topics (
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
@@ -368,38 +323,13 @@ class ContextStore:
                 """
             )
 
-    def _backfill_sqlite_events_from_index(self) -> None:
-        rows = self._event_index_rows("1=1", (), None)
-        if not rows:
-            return
-        events = self._read_indexed_events(rows)
-        if not events:
-            return
-        with self._connect() as conn:
-            for event in events:
-                self._upsert_sqlite_event(conn, event)
-
-    def _upsert_sqlite_event(self, conn: sqlite3.Connection, event: ContextEvent) -> None:
-        conn.execute(
-            "INSERT OR REPLACE INTO events(id, type, content, metadata_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (
-                event.id,
-                event.event_type,
-                event.content,
-                json.dumps(event.metadata or {}),
-                event.created_at,
-            ),
-        )
-
     def _next_event_id(self) -> int:
         value = self.get_state("next_event_id", "")
         if value:
             return int(value)
         with self._connect() as conn:
             row = conn.execute("SELECT COALESCE(MAX(event_id), 0) FROM event_index").fetchone()
-            old = conn.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()
-        return max(int(row[0]), int(old[0])) + 1
+        return int(row[0]) + 1
 
     def _append_jsonl(self, shard: str, record: dict[str, Any]) -> None:
         path = self.events_dir / shard
