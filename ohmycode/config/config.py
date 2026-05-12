@@ -3,39 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-
-DEFAULT_CONFIG: dict[str, Any] = {
-    "provider": "openai",
-    "model": "gpt-4o",
-    "mode": "default",
-    "max_turns": 100,
-    "token_budget": 200000,
-    "output_tokens_reserved": 8192,
-    "rules": [],
-    "system_prompt_append": "",
-    "search_api": "",
-    "search_api_key": "",
-    "azure_endpoint": "",
-    "azure_api_version": "2024-02-01",
-    "base_url": "",
-    "api_key": "",
-    "auth_token": "",
-    "profiles": {},
-    "active_profile": "",
-    "context_enabled": True,
-    "context_visibility": "silent",
-    "context_ambiguity_confirmation": True,
-    "context_curator": "async",
-    "memory_backend": "btree",
-    "compression_strategy": "tiered",
-    "system_prompt_sections": None,
-}
+logger = logging.getLogger(__name__)
 
 
 class OhMyCodeConfig(BaseModel):
@@ -67,6 +42,9 @@ class OhMyCodeConfig(BaseModel):
     system_prompt_sections: list[str] | None = None
 
 
+DEFAULT_CONFIG: dict[str, Any] = OhMyCodeConfig().model_dump()
+
+
 def merge_configs(base: dict, override: dict) -> dict:
     """Merge two config dicts: scalars override, lists concatenate, dicts merge deeply."""
     result = dict(base)
@@ -88,7 +66,8 @@ def _read_json(path: Path) -> dict:
         return {}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("invalid JSON config at %s: %s", path, exc)
         return {}
 
 
