@@ -9,8 +9,8 @@ import pytest
 
 from ohmycode.context.curator import CURATOR_SYSTEM, ContextCurator, build_provider_curate_fn
 from ohmycode.context.packet import ContextPacket
-from ohmycode.core.messages import TextChunk, TokenUsage, TurnComplete
 from ohmycode.context.store import ContextStore
+from ohmycode.core.messages import TextChunk, TokenUsage, TurnComplete
 
 
 def _store(name: str) -> ContextStore:
@@ -267,11 +267,13 @@ async def test_curator_ignores_invalid_json_without_marking_processed():
 
 
 @pytest.mark.asyncio
-async def test_curator_self_heals_when_high_water_mark_exceeds_max_event(capfd):
+async def test_curator_self_heals_when_high_water_mark_exceeds_max_event(caplog):
     """If last_processed_event_id is past the end of the event log (e.g.
     after external truncation or a project-slug collision), the curator
     should reset its mark to 0 and reprocess history rather than
     perpetually returning ``no_events``."""
+    import logging
+
     store = _store("curator_self_heal")
     # Two real events (IDs 1 and 2)
     store.append_event("user_message", "hi")
@@ -285,16 +287,16 @@ async def test_curator_self_heals_when_high_water_mark_exceeds_max_event(capfd):
     async def fake_curate(*args, **kwargs):
         return '{"action":"keep","topic":{"id":"%s"}}' % topic_id
 
-    result = await ContextCurator(store, fake_curate).run_once()
+    with caplog.at_level(logging.WARNING, logger="ohmycode.context.curator"):
+        result = await ContextCurator(store, fake_curate).run_once()
 
     # After self-heal + reprocess, the run completes normally and the mark
     # is reset to the highest real event ID (2).
     assert result.applied is True
     assert store.get_last_processed_event_id() == 2
 
-    # The diagnostic warning is printed to stderr.
-    captured = capfd.readouterr()
-    assert "exceeds max_event_id" in captured.err
+    # The diagnostic warning is emitted to the logger.
+    assert any("exceeds max_event_id" in rec.message for rec in caplog.records)
 
 
 @pytest.mark.asyncio

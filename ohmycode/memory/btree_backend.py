@@ -8,16 +8,16 @@ Three-level layout:
 
 from __future__ import annotations
 
+import logging
 import random
 import re
 import string
-import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List
 
 from ohmycode.memory.backend import register_memory_backend
 
+logger = logging.getLogger(__name__)
 
 MAX_INDEX_LINES = 30
 MAX_INDEX_BYTES = 4096
@@ -103,7 +103,7 @@ class BTreeMemoryStore:
 
     # ── L1 category summary operations ───────────────────────────────────────
 
-    def list_category(self, category: str) -> List[dict]:
+    def list_category(self, category: str) -> list[dict]:
         """List all memories in a category."""
         cat_dir = self.root / category
         if not cat_dir.is_dir():
@@ -117,9 +117,8 @@ class BTreeMemoryStore:
                 name, mem_type = _parse_frontmatter_meta(raw)
                 results.append({"name": name, "type": mem_type, "filename": md_file.name})
             except (OSError, ValueError) as exc:
-                print(
-                    f"[memory] skipped {md_file.name}: {type(exc).__name__}: {exc}",
-                    file=sys.stderr,
+                logger.warning(
+                    "skipped %s: %s: %s", md_file.name, type(exc).__name__, exc
                 )
         return results
 
@@ -139,7 +138,7 @@ class BTreeMemoryStore:
 
     # ── L0 root index operations ─────────────────────────────────────────────
 
-    def list_all(self) -> List[dict]:
+    def list_all(self) -> list[dict]:
         results = []
         for cat in VALID_CATEGORIES:
             results.extend(self.list_category(cat))

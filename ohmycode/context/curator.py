@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
-import sys
+import logging
+from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import Callable
 
-from ohmycode.core.messages import UserMessage
 from ohmycode.context.packet import ContextPacket, coerce_text_list
 from ohmycode.context.store import ContextStore
+from ohmycode.core.messages import UserMessage
 from ohmycode.providers.base import stream_to_text
 
+logger = logging.getLogger(__name__)
 
 CurateFn = Callable[..., Awaitable[str]]
 
@@ -47,10 +49,10 @@ class ContextCurator:
         if not events and last_id > 0:
             max_event = self.store.get_max_event_id()
             if last_id > max_event:
-                print(
-                    f"[curator] last_processed_event_id={last_id} exceeds "
-                    f"max_event_id={max_event}; resetting to 0",
-                    file=sys.stderr,
+                logger.warning(
+                    "last_processed_event_id=%s exceeds max_event_id=%s; resetting to 0",
+                    last_id,
+                    max_event,
                 )
                 self.store.set_last_processed_event_id(0)
                 last_id = 0

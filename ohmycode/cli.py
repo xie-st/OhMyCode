@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import signal
 import sys
 import threading
@@ -27,7 +28,6 @@ if sys.platform == "win32":
 from rich.console import Console
 
 from ohmycode.core.permissions import MODES
-
 
 console = Console()
 
@@ -99,6 +99,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def run() -> int:
     """CLI main: parse args, dispatch to run_single, run_repl, or subcommands."""
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(name)s: %(message)s",
+        stream=sys.stderr,
+    )
     args = parse_args()
 
     if args.command == "vchange":
