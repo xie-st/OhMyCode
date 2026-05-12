@@ -8,9 +8,12 @@ import pkgutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from ohmycode.providers.base import ToolDef
+
+if TYPE_CHECKING:
+    from ohmycode.config.config import OhMyCodeConfig
 
 
 @dataclass
@@ -20,7 +23,7 @@ class ToolContext:
     agent_depth: int    # 0 = top-level agent
     cwd: str            # current working directory
     is_sub_agent: bool
-    config: Any = None  # parent OhMyCodeConfig, forwarded to sub-agents
+    config: Optional[OhMyCodeConfig] = None  # forwarded to sub-agents
     extra: dict = field(default_factory=dict)
     # Optional sink for tools to push StreamEvents through to the renderer
     # (e.g. AgentTool emits SubAgentToolUse/SubAgentDone). None = no rendering
