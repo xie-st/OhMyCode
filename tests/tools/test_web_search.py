@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+
 from ohmycode.tools.base import ToolContext
 from ohmycode.tools.web_search import WebSearchTool, _detect_proxy
 

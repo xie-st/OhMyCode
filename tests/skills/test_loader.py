@@ -1,7 +1,6 @@
 # tests/skills/test_loader.py
-import pytest
-from pathlib import Path
-from ohmycode.skills.loader import SkillInfo, parse_frontmatter, scan_skills, load_skill
+from ohmycode.skills.loader import SkillInfo, load_skill, parse_frontmatter, scan_skills
+
 
 def test_parse_frontmatter_basic():
     text = "---\nname: my-skill\ndescription: A test skill\n---\n\n# Hello\n\nBody content."

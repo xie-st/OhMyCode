@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
 from ohmycode.core.system_prompt import build_system_prompt, find_project_instructions
-
 
 # ---- build_system_prompt ----
 

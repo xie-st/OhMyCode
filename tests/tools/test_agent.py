@@ -1,15 +1,17 @@
-import pytest
 from unittest.mock import patch
-from ohmycode.tools.base import ToolContext
-from ohmycode.tools.agent import AgentTool, MAX_AGENT_DEPTH
+
+import pytest
+
 from ohmycode.core.messages import (
     SubAgentDone,
     SubAgentToolUse,
     TextChunk,
+    TokenUsage,
     ToolCallStart,
     TurnComplete,
-    TokenUsage,
 )
+from ohmycode.tools.agent import MAX_AGENT_DEPTH, AgentTool
+from ohmycode.tools.base import ToolContext
 
 
 @pytest.fixture
@@ -152,6 +154,7 @@ def test_no_imports_from_cli_layer():
     """Sanity check: tools.agent must not import _cli.* (orthogonality)."""
     import ast
     import inspect
+
     from ohmycode.tools import agent as agent_mod
 
     tree = ast.parse(inspect.getsource(agent_mod))

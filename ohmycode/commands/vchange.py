@@ -7,7 +7,6 @@ import subprocess
 
 from rich.console import Console
 
-
 _console = Console()
 
 
@@ -26,14 +25,14 @@ def run_vchange(step: int | None = None) -> int:
                              capture_output=True, text=True, cwd=cwd)
         head = subprocess.run(["git", "rev-parse", "HEAD"],
                               capture_output=True, text=True, cwd=cwd).stdout.strip()
-        _console.print(f"\n  [bold]Recent commits:[/]")
+        _console.print("\n  [bold]Recent commits:[/]")
         for line in log.stdout.strip().splitlines():
             sha = line.split()[0]
             if head.startswith(sha):
                 _console.print(f"    [green]▸ {line}[/]  [green]← HEAD[/]")
             else:
                 _console.print(f"    [dim]  {line}[/]")
-        _console.print(f"\n  [dim]Usage: ohmycode vchange -1 (back) / ohmycode vchange 1 (forward)[/]")
+        _console.print("\n  [dim]Usage: ohmycode vchange -1 (back) / ohmycode vchange 1 (forward)[/]")
         return 0
 
     if step == 0:

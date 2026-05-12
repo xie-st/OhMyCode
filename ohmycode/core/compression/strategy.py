@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import pkgutil
 from pathlib import Path
-from typing import Any, Callable, List, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from ohmycode.core.messages import Message
 
@@ -16,13 +16,13 @@ class CompressionStrategy(Protocol):
 
     async def maybe_compress(
         self,
-        messages: List[Message],
+        messages: list[Message],
         system_prompt: str,
         provider: Any,
         model: str,
         *,
         allow_llm: bool = True,
-    ) -> List[Message]: ...
+    ) -> list[Message]: ...
 
 
 _STRATEGY_REGISTRY: dict[str, Callable[..., CompressionStrategy]] = {}

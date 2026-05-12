@@ -4,18 +4,17 @@ from __future__ import annotations
 
 import pytest
 
+from ohmycode._cli.output import RichRenderer
 from ohmycode.config.config import OhMyCodeConfig
 from ohmycode.core.loop import ConversationLoop
 from ohmycode.core.messages import (
     SubAgentDone,
-    SubAgentToolUse,
     TextChunk,
     TokenUsage,
     ToolCallResult,
     ToolCallStart,
     TurnComplete,
 )
-from ohmycode._cli.output import RichRenderer
 
 
 @pytest.fixture

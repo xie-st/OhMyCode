@@ -1,6 +1,6 @@
 """Tests for the permission pipeline."""
-import pytest
-from ohmycode.core.permissions import PermissionResult, check_permission, match_rules
+from ohmycode.core.permissions import check_permission
+
 
 def test_safe_tool_always_allowed():
     result = check_permission(tool_name="read", params={"file_path": "/tmp/test.py"},

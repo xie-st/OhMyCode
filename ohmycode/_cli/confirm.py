@@ -11,7 +11,6 @@ from rich.markup import escape
 
 from ohmycode._cli.output import ACCENT
 
-
 _console = Console()
 
 

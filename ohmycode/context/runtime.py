@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import re
@@ -41,7 +42,7 @@ class ContextRuntime:
         self._compression_pending: set[str] = set()
 
     @classmethod
-    def for_cwd(cls, cwd: str) -> "ContextRuntime":
+    def for_cwd(cls, cwd: str) -> ContextRuntime:
         memory_dir = Path(get_project_memory_dir(cwd))
         db_path = memory_dir.parent / "context" / "context.db"
         return cls(ContextStore(db_path))
@@ -165,18 +166,14 @@ class ContextRuntime:
                 await asyncio.wait_for(self._curator_task, timeout=timeout)
             except asyncio.TimeoutError:
                 self._curator_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await self._curator_task
-                except asyncio.CancelledError:
-                    pass
         for task in list(self._compression_tasks.values()):
             if task.done():
                 continue
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            except asyncio.CancelledError:
-                pass
 
     def switch_topic(self, topic_id: str) -> bool:
         if self.store.get_topic(topic_id) is None:

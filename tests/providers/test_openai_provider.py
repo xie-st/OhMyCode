@@ -1,6 +1,6 @@
 """Tests for the OpenAI-compatible provider."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -39,8 +39,8 @@ def _make_stream_chunk(content=None, finish_reason=None, tool_calls=None):
 @pytest.mark.asyncio
 async def test_stream_passes_reasoning_effort():
     """reasoning_effort kwarg is forwarded to the OpenAI API call."""
-    from ohmycode.providers.openai import OpenAIProvider
     from ohmycode.core.messages import UserMessage
+    from ohmycode.providers.openai import OpenAIProvider
 
     provider = OpenAIProvider(api_key="test-key")
 
@@ -73,8 +73,8 @@ async def test_stream_passes_reasoning_effort():
 @pytest.mark.asyncio
 async def test_stream_no_reasoning_effort_by_default():
     """reasoning_effort is NOT included in the API call when not passed."""
-    from ohmycode.providers.openai import OpenAIProvider
     from ohmycode.core.messages import UserMessage
+    from ohmycode.providers.openai import OpenAIProvider
 
     provider = OpenAIProvider(api_key="test-key")
 

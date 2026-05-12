@@ -2,7 +2,6 @@
 
 from ohmycode.providers.base import (
     PROVIDER_REGISTRY,
-    Provider,
     get_provider,
     register_provider,
 )

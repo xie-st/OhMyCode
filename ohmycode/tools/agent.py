@@ -7,6 +7,7 @@ turning those into a panel; this module deliberately does not import any UI.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 
 from ohmycode.config.config import OhMyCodeConfig
@@ -26,10 +27,8 @@ def _emit(ctx: ToolContext, event) -> None:
     """Best-effort event emission; swallows emitter exceptions so tool exec is unaffected."""
     if ctx.event_emitter is None:
         return
-    try:
+    with contextlib.suppress(Exception):
         ctx.event_emitter(event)
-    except Exception:
-        pass
 
 
 @register_tool

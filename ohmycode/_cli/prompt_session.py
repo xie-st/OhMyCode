@@ -62,7 +62,7 @@ def build_prompt_session(
     from prompt_toolkit import PromptSession
     from prompt_toolkit.completion import Completer, Completion
     from prompt_toolkit.filters import Condition
-    from prompt_toolkit.formatted_text import FormattedText, HTML
+    from prompt_toolkit.formatted_text import HTML, FormattedText
     from prompt_toolkit.history import FileHistory
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.styles import Style as PTStyle

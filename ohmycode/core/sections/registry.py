@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
 
 @dataclass

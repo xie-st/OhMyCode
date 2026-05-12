@@ -1,6 +1,7 @@
 """Tests for GlobTool — file pattern matching."""
 
 import pytest
+
 from ohmycode.tools.base import ToolContext
 from ohmycode.tools.glob_tool import GlobTool
 

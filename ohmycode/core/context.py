@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 import tiktoken
 
-from ohmycode.core.messages import AssistantMessage, ImageBlock, Message, UserMessage
+from ohmycode.core.messages import ImageBlock, Message, UserMessage
 
 if TYPE_CHECKING:
     pass
@@ -43,7 +42,7 @@ class ContextManager:
     # Token counting
     # ------------------------------------------------------------------
 
-    def count_tokens(self, messages: List[Message], system_prompt: str = "") -> int:
+    def count_tokens(self, messages: list[Message], system_prompt: str = "") -> int:
         """Approximate token count for messages + system prompt."""
         total = 0
         if system_prompt:
@@ -61,7 +60,7 @@ class ContextManager:
                 total += _count_text_tokens(raw) + _MSG_OVERHEAD
         return total
 
-    def get_usage_ratio(self, messages: List[Message], system_prompt: str = "") -> float:
+    def get_usage_ratio(self, messages: list[Message], system_prompt: str = "") -> float:
         """Return token usage as fraction of effective window (budget - output_reserved)."""
         effective = max(1, self.token_budget - self.output_reserved)
         used = self.count_tokens(messages, system_prompt)
@@ -71,7 +70,7 @@ class ContextManager:
     # Level 1: snip — remove oldest 2–4 messages
     # ------------------------------------------------------------------
 
-    def snip(self, messages: List[Message]) -> List[Message]:
+    def snip(self, messages: list[Message]) -> list[Message]:
         """Remove the 2–4 oldest messages."""
         if len(messages) <= 2:
             # Can't meaningfully snip fewer than 2 messages
@@ -105,8 +104,8 @@ class ContextManager:
     # ------------------------------------------------------------------
 
     async def micro_compact(
-        self, messages: List[Message], provider, model: str
-    ) -> List[Message]:
+        self, messages: list[Message], provider, model: str
+    ) -> list[Message]:
         """Summarize oldest 20% of messages with an LLM call."""
         self._check_circuit_breaker()
         if len(messages) < 4:
@@ -135,7 +134,7 @@ class ContextManager:
         try:
             summary = await self._llm_summarize(provider, model, prompt)
             self._record_success()
-        except Exception as exc:
+        except Exception:
             self._record_failure()
             raise
         summary_msg = UserMessage(content=f"[Earlier context summary]: {summary}")
@@ -146,8 +145,8 @@ class ContextManager:
     # ------------------------------------------------------------------
 
     async def collapse(
-        self, messages: List[Message], provider, model: str
-    ) -> List[Message]:
+        self, messages: list[Message], provider, model: str
+    ) -> list[Message]:
         """Keep the most recent 20 messages; summarize the rest."""
         self._check_circuit_breaker()
         keep = 20
@@ -164,7 +163,7 @@ class ContextManager:
         try:
             summary = await self._llm_summarize(provider, model, prompt)
             self._record_success()
-        except Exception as exc:
+        except Exception:
             self._record_failure()
             raise
         summary_msg = UserMessage(content=f"[Conversation summary]: {summary}")
@@ -175,8 +174,8 @@ class ContextManager:
     # ------------------------------------------------------------------
 
     async def auto_compact(
-        self, messages: List[Message], provider, model: str
-    ) -> List[Message]:
+        self, messages: list[Message], provider, model: str
+    ) -> list[Message]:
         """Keep the most recent 10 messages; summarize all else into one paragraph."""
         self._check_circuit_breaker()
         keep = 10
@@ -194,7 +193,7 @@ class ContextManager:
         try:
             summary = await self._llm_summarize(provider, model, prompt)
             self._record_success()
-        except Exception as exc:
+        except Exception:
             self._record_failure()
             raise
         summary_msg = UserMessage(content=f"[Full conversation summary]: {summary}")
@@ -206,12 +205,12 @@ class ContextManager:
 
     async def maybe_compress(
         self,
-        messages: List[Message],
+        messages: list[Message],
         system_prompt: str,
         provider,
         model: str,
         allow_llm: bool = True,
-    ) -> List[Message]:
+    ) -> list[Message]:
         """Check usage ratio and apply the appropriate compression strategy.
 
         Thresholds:
@@ -239,7 +238,7 @@ class ContextManager:
 
     async def _llm_summarize(self, provider, model: str, prompt: str) -> str:
         """Call the provider to produce a summary string."""
-        from ohmycode.core.messages import AssistantMessage as AM, UserMessage as UM
+        from ohmycode.core.messages import UserMessage as UM
 
         request_messages = [UM(content=prompt)]
         from ohmycode.providers.base import stream_to_text

@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
-from openai import AsyncAzureOpenAI, AsyncOpenAI
-from openai import APIStatusError, RateLimitError
+from openai import APIStatusError, AsyncAzureOpenAI, AsyncOpenAI, RateLimitError
 
 from ohmycode.core.messages import (
     Message,
     StreamEvent,
     TextChunk,
-    ToolCallStart,
     ToolCallStreaming,
-    TurnComplete,
 )
 from ohmycode.providers.base import BaseProvider, ToolDef, register_provider
 
@@ -44,9 +42,7 @@ class OpenAIProvider(BaseProvider):
     def _is_retryable(self, exc: BaseException) -> bool:
         if isinstance(exc, RateLimitError):
             return True
-        if isinstance(exc, APIStatusError) and exc.status_code == 503:
-            return True
-        return False
+        return bool(isinstance(exc, APIStatusError) and exc.status_code == 503)
 
     def _build_request_kwargs(
         self,

@@ -1,6 +1,7 @@
 """Tests for ContextManager (Task 16) — TDD first."""
 
 import pytest
+
 from ohmycode.core.context import ContextManager
 from ohmycode.core.messages import AssistantMessage, UserMessage
 

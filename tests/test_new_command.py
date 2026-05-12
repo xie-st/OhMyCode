@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch, call
-import pytest
+from unittest.mock import MagicMock, patch
 
 from ohmycode.config.config import OhMyCodeConfig
 from ohmycode.core.loop import ConversationLoop
-from ohmycode.core.messages import UserMessage, AssistantMessage
+from ohmycode.core.messages import AssistantMessage
 
 
 def _make_conv(with_messages: bool = True) -> ConversationLoop:
@@ -29,7 +28,6 @@ def _make_conv(with_messages: bool = True) -> ConversationLoop:
 
 def _simulate_new_command(conv, config, resumed_filename):
     """Mirror the /new elif block from cli.py run_repl() for isolated testing."""
-    save_called_with = None
     save_result = None
     error_occurred = False
 
@@ -39,9 +37,9 @@ def _simulate_new_command(conv, config, resumed_filename):
             saved = save_conversation(
                 conv.messages, config.provider, config.model, config.mode
             )
-            save_called_with = (conv.messages[:], config.provider, config.model, config.mode)
+            (conv.messages[:], config.provider, config.model, config.mode)
             save_result = saved
-        except Exception as e:
+        except Exception:
             error_occurred = True
             return conv, resumed_filename, error_occurred, save_result
 
@@ -137,7 +135,7 @@ def test_clear_does_not_save_or_recreate_loop(tmp_path, monkeypatch):
     import ohmycode.storage.conversation as conv_mod
     monkeypatch.setattr(conv_mod, "CONVERSATIONS_DIR", tmp_path)
 
-    config = OhMyCodeConfig(provider="mock", model="test", mode="auto", api_key="x")
+    OhMyCodeConfig(provider="mock", model="test", mode="auto", api_key="x")
     conv = _make_conv(with_messages=True)
     original_id = id(conv)
     original_think = conv.think
@@ -153,8 +151,9 @@ def test_clear_does_not_save_or_recreate_loop(tmp_path, monkeypatch):
 
 def test_new_builtin_registered():
     """Verify /new appears in the SlashCompleter._BUILTIN via source inspection."""
-    import ohmycode._cli.prompt_session as ps_mod
     import inspect
+
+    import ohmycode._cli.prompt_session as ps_mod
     source = inspect.getsource(ps_mod)
     assert '"/new"' in source
     assert "Save current conversation and start fresh" in source

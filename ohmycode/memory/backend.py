@@ -15,7 +15,6 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable, Protocol, runtime_checkable
 
-
 # ── Project memory dir resolution (used by every backend) ────────────────────
 
 

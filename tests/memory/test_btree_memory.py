@@ -7,13 +7,12 @@ from pathlib import Path
 import pytest
 
 from ohmycode.memory.memory import (
-    BTreeMemoryStore,
-    get_project_memory_dir,
-    MAX_INDEX_LINES,
     MAX_INDEX_BYTES,
+    MAX_INDEX_LINES,
+    BTreeMemoryStore,
     _parse_frontmatter_meta,
+    get_project_memory_dir,
 )
-
 
 # ---- Phase 1: Foundation tests ----
 
@@ -117,7 +116,7 @@ class TestIndexCaps:
         for i in range(50):
             store.save(f"fact-{i}", "user", f"content {i}")
         index_content = store.get_root_index()
-        lines = [l for l in index_content.strip().splitlines() if l.strip()]
+        lines = [line for line in index_content.strip().splitlines() if line.strip()]
         assert len(lines) <= MAX_INDEX_LINES
 
     def test_root_index_stays_under_byte_cap(self, tmp_path):

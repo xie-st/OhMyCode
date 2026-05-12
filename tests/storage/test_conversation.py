@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+import ohmycode.storage.conversation as conv_mod
 from ohmycode.core.messages import (
     AssistantMessage,
     SystemMessage,
@@ -21,7 +22,6 @@ from ohmycode.storage.conversation import (
     load_conversation,
     save_conversation,
 )
-import ohmycode.storage.conversation as conv_mod
 
 
 @pytest.fixture(autouse=True)

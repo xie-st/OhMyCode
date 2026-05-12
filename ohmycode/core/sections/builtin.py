@@ -14,7 +14,6 @@ from ohmycode.core.permissions import MODE_AUTO, MODE_DEFAULT, MODE_PLAN
 from ohmycode.core.sections.registry import SectionContext, section
 from ohmycode.tools.base import TOOL_REGISTRY
 
-
 _MODE_DESCRIPTIONS = {
     MODE_DEFAULT: (
         "You are in DEFAULT mode. Dangerous operations (file writes, "

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import sqlite3
 import shutil
+import sqlite3
 from pathlib import Path
 
 from ohmycode.context.packet import ContextPacket

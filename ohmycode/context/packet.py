@@ -24,11 +24,11 @@ class ContextPacket:
     last_event_id: int = 0
 
     @classmethod
-    def empty(cls) -> "ContextPacket":
+    def empty(cls) -> ContextPacket:
         return cls()
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ContextPacket":
+    def from_dict(cls, data: dict[str, Any]) -> ContextPacket:
         allowed = cls.__dataclass_fields__.keys()
         values = {k: v for k, v in data.items() if k in allowed}
         for field_name in ("topic_id", "title", "summary", "status"):

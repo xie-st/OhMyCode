@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from ohmycode.memory.memory import filter_messages_for_extraction, parse_extraction_response
 
 
@@ -23,7 +21,7 @@ class TestFilterMessages:
         assert len(filtered) == 1
 
     def test_filters_out_tool_results(self):
-        from ohmycode.core.messages import UserMessage, ToolResultMessage
+        from ohmycode.core.messages import ToolResultMessage, UserMessage
         msgs = [
             UserMessage(content="read file.py"),
             ToolResultMessage(tool_use_id="t1", content="def main(): ...\n" * 100, is_error=False),
@@ -33,7 +31,7 @@ class TestFilterMessages:
         assert filtered[0].content == "read file.py"
 
     def test_filters_empty_content(self):
-        from ohmycode.core.messages import UserMessage, AssistantMessage
+        from ohmycode.core.messages import AssistantMessage, UserMessage
         msgs = [
             UserMessage(content="hi"),
             AssistantMessage(content=""),

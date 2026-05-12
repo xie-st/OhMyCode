@@ -12,8 +12,9 @@ import importlib
 import json
 import pkgutil
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator, Awaitable
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from ohmycode.core.messages import (
     Message,

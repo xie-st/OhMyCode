@@ -1,8 +1,10 @@
 import sys
 
 import pytest
+
 from ohmycode.tools.base import ToolContext
 from ohmycode.tools.bash import BashTool, _decode_output
+
 
 @pytest.fixture
 def ctx(tmp_path):

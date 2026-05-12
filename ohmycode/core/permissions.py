@@ -1,5 +1,6 @@
 """Permission pipeline: input validation → rule matching → mode checks → user confirmation."""
 from __future__ import annotations
+
 import fnmatch
 import re
 from dataclasses import dataclass

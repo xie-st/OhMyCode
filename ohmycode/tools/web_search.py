@@ -104,7 +104,7 @@ class WebSearchTool(Tool):
             title = self._strip_tags(match.group(2))
 
             # Decode DuckDuckGo redirect: extract uddg= param
-            from urllib.parse import unquote, parse_qs, urlparse
+            from urllib.parse import parse_qs, unquote, urlparse
             parsed = urlparse(raw_url)
             uddg = parse_qs(parsed.query).get("uddg")
             url = unquote(uddg[0]) if uddg else raw_url

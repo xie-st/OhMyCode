@@ -1,6 +1,7 @@
 """Tests for GrepTool — regex search over files."""
 
 import pytest
+
 from ohmycode.tools.base import ToolContext
 from ohmycode.tools.grep import GrepTool
 

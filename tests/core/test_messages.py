@@ -3,7 +3,6 @@
 from ohmycode.core.messages import (
     AssistantMessage,
     ImageBlock,
-    Message,
     SystemMessage,
     TextChunk,
     TokenUsage,

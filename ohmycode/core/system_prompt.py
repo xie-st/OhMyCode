@@ -7,8 +7,8 @@ module exists for backwards compatibility and to host
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from ohmycode.core.sections import (
     SectionContext,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import locale
 
 from ohmycode.tools.base import Tool, ToolContext, ToolResult, register_tool
@@ -44,10 +45,8 @@ class BashTool(Tool):
             try:
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             except asyncio.TimeoutError:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     proc.kill()
-                except ProcessLookupError:
-                    pass
                 return ToolResult(
                     output=f"Command timed out after {timeout} seconds.",
                     is_error=True,

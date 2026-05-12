@@ -1,10 +1,17 @@
 """Tests for tool base class, registry, and concurrent partitioning."""
-import asyncio
 import pytest
+
 from ohmycode.tools.base import (
-    TOOL_REGISTRY, Tool, ToolContext, ToolResult,
-    get_tool_defs, partition_tool_calls, register_tool, run_tool_calls,
+    TOOL_REGISTRY,
+    Tool,
+    ToolContext,
+    ToolResult,
+    get_tool_defs,
+    partition_tool_calls,
+    register_tool,
+    run_tool_calls,
 )
+
 
 class EchoTool(Tool):
     name = "echo"

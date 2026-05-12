@@ -7,12 +7,11 @@ from typing import Any
 
 from rich.console import Console
 
+from ohmycode._cli.confirm import confirm_tool_call
+from ohmycode._cli.output import render_stream
 from ohmycode.config.config import load_config
 from ohmycode.core.file_ref import expand_file_refs
 from ohmycode.core.loop import ConversationLoop
-from ohmycode._cli.confirm import confirm_tool_call
-from ohmycode._cli.output import render_stream
-
 
 _console = Console()
 

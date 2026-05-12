@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import random
@@ -9,7 +10,7 @@ import string
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Optional
 
 from ohmycode.core.messages import (
     AssistantMessage,
@@ -94,7 +95,7 @@ def _dict_to_msg(d: dict) -> Message:
 
 
 def save_conversation(
-    messages: List[Message],
+    messages: list[Message],
     provider: str = "",
     model: str = "",
     mode: str = "",
@@ -146,13 +147,11 @@ def mark_conversation_memories_extracted(filename: str) -> None:
             f.write(json.dumps(data, ensure_ascii=False, indent=2))
         os.replace(tmp_path, filepath)
     except Exception:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_path)
-        except OSError:
-            pass
 
 
-def list_unextracted_conversations(session_id: str = "") -> List[str]:
+def list_unextracted_conversations(session_id: str = "") -> list[str]:
     """Return filenames of conversations saved with memories_extracted=False for this session."""
     _ensure_dir()
     result = []
@@ -172,7 +171,7 @@ def list_unextracted_conversations(session_id: str = "") -> List[str]:
 
 def load_conversation(
     resume_arg: str = "",
-) -> Optional[Tuple[List[Message], dict]]:
+) -> Optional[tuple[list[Message], dict]]:
     """Load a conversation from disk.
 
     Args:

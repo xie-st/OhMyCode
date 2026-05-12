@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sys
 import time
@@ -50,13 +51,11 @@ async def _spinner_task(message: str, t_start: float) -> None:
         sys.stdout.flush()
 
 
-async def _cancel_spinner(task: "asyncio.Task | None") -> None:
+async def _cancel_spinner(task: asyncio.Task | None) -> None:
     if task is not None and not task.done():
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
 
 def _is_interactive() -> bool:
@@ -110,7 +109,7 @@ class ScrollingBox:
                 content = display[i][:_BOX_CONTENT_WIDTH]
                 rows.append(f"  \033[2m│  {content}\033[0m")
             else:
-                rows.append(f"  \033[2m│\033[0m")
+                rows.append("  \033[2m│\033[0m")
         return "\n".join(rows)
 
     def _draw(self) -> None:
@@ -190,8 +189,8 @@ class RichRenderer(DispatchingRenderer):
         self.conv = conv
         self.finish_reason: str = "stop"
         self._t_start: float = 0.0
-        self._spinner_task: "asyncio.Task | None" = None
-        self._tool_spinner_task: "asyncio.Task | None" = None
+        self._spinner_task: asyncio.Task | None = None
+        self._tool_spinner_task: asyncio.Task | None = None
         self._box: ThinkingBox | None = None
         self._sub_agent_box: SubAgentBox | None = None
         self._text_printed: bool = False
@@ -299,13 +298,13 @@ class RichRenderer(DispatchingRenderer):
         max_lines = 10
         lines = raw.splitlines()
         if len(lines) > max_lines:
-            indented = "\n".join("    " + l for l in lines[:max_lines])
+            indented = "\n".join("    " + line for line in lines[:max_lines])
             output = escape(indented) + f"\n    [dim]... ({len(lines)} lines total)[/dim]"
         else:
             body = raw
             if len(body) > 500:
                 body = body[:497] + "..."
-            body = "\n".join("    " + l for l in body.splitlines())
+            body = "\n".join("    " + line for line in body.splitlines())
             output = escape(body)
 
         if event.is_error:

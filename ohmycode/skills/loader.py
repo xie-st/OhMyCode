@@ -1,8 +1,10 @@
 """Skill loader: scan layered paths, parse frontmatter, load skill content."""
 from __future__ import annotations
+
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
 
 @dataclass
 class SkillInfo:

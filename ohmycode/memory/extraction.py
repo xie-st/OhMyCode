@@ -7,13 +7,12 @@ structured memory dicts; storing them is the caller's job.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import threading
-from typing import List, Tuple
 
 from ohmycode.providers._streaming_utils import stream_to_box, stream_to_text
-
 
 _EXTRACTION_SYSTEM = (
     "You are a strict JSON extractor. Your only output is a single JSON array. "
@@ -39,7 +38,7 @@ def filter_messages_for_extraction(messages: list) -> list:
     return filtered
 
 
-def parse_extraction_response(raw_text: str) -> List[dict]:
+def parse_extraction_response(raw_text: str) -> list[dict]:
     """Robustly parse LLM extraction output into memory dicts.
 
     Tries: JSON array → JSON-lines → regex sweep. Each result must have
@@ -52,7 +51,7 @@ def parse_extraction_response(raw_text: str) -> List[dict]:
 
     cleaned = raw_text.strip()
     if cleaned.startswith("```"):
-        lines = [l for l in cleaned.splitlines() if not l.strip().startswith("```")]
+        lines = [line for line in cleaned.splitlines() if not line.strip().startswith("```")]
         cleaned = "\n".join(lines)
 
     try:
@@ -116,7 +115,7 @@ def _build_extraction_request(messages: list):
 
 async def extract_memories_from_conversation(
     messages: list, provider, model: str
-) -> List[dict]:
+) -> list[dict]:
     """Use the LLM to extract memorable facts."""
     try:
         request = _build_extraction_request(messages)
@@ -132,7 +131,7 @@ async def extract_memories_from_conversation(
 
 async def extract_memories_with_box(
     messages: list, provider, model: str, box
-) -> List[dict]:
+) -> list[dict]:
     """Stream extraction output to ``box`` for live display."""
     try:
         request = _build_extraction_request(messages)
@@ -151,8 +150,8 @@ async def extract_memories_with_box_cancellable(
     provider,
     model: str,
     box,
-    cancel_event: "threading.Event | None",
-) -> Tuple[List[dict], bool]:
+    cancel_event: threading.Event | None,
+) -> tuple[list[dict], bool]:
     """Cancellable variant of ``extract_memories_with_box``.
 
     Returns ``(memories, cancelled)``. ``cancelled=True`` means
@@ -195,18 +194,14 @@ async def extract_memories_with_box_cancellable(
         cancel_event.clear()
         stop_polling.set()
         render_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await render_task
-        except (asyncio.CancelledError, Exception):
-            pass
         return [], True
 
     stop_polling.set()
     cancel_fut.cancel()
-    try:
+    with contextlib.suppress(asyncio.CancelledError, Exception):
         await cancel_fut
-    except (asyncio.CancelledError, Exception):
-        pass
     try:
         raw_text = render_task.result()
         return parse_extraction_response(raw_text), False

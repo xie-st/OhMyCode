@@ -15,10 +15,11 @@ dead-letter queue. Adding any of those is a feature request, not a bug fix.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable
+import contextlib
+from collections.abc import Awaitable
+from typing import Any, Callable
 
 from ohmycode.core.messages import StreamEvent
-
 
 Handler = Callable[[StreamEvent], "Any | Awaitable[Any]"]
 
@@ -35,10 +36,8 @@ class EventBus:
         self._handlers.append(handler)
 
         def _unsubscribe() -> None:
-            try:
+            with contextlib.suppress(ValueError):
                 self._handlers.remove(handler)
-            except ValueError:
-                pass
 
         return _unsubscribe
 
@@ -54,10 +53,8 @@ class EventBus:
         subscriber cannot wedge the kernel.
         """
         if self._buffer_sink is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._buffer_sink(event)
-            except Exception:
-                pass
 
         for handler in list(self._handlers):
             try:

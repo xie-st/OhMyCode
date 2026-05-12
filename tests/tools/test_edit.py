@@ -1,6 +1,8 @@
 import pytest
+
 from ohmycode.tools.base import ToolContext
 from ohmycode.tools.edit import EditTool
+
 
 @pytest.fixture
 def ctx(tmp_path):

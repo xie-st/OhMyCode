@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
-from anthropic import AsyncAnthropic
-from anthropic import APIStatusError, RateLimitError
+from anthropic import APIStatusError, AsyncAnthropic, RateLimitError
 
 from ohmycode.core.messages import (
     AssistantMessage,
@@ -14,14 +14,11 @@ from ohmycode.core.messages import (
     StreamEvent,
     TextChunk,
     ThinkingChunk,
-    ToolCallStart,
     ToolCallStreaming,
     ToolResultMessage,
-    TurnComplete,
     UserMessage,
 )
 from ohmycode.providers.base import BaseProvider, ToolDef, register_provider
-
 
 # Claude 4 generation supports adaptive thinking; older models use manual budgets.
 _ADAPTIVE_THINKING_MODELS = ("claude-opus-4", "claude-sonnet-4", "claude-haiku-4")

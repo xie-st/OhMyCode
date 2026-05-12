@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from ohmycode.core.file_ref import (
     MAX_FILE_BYTES,
     MAX_FILE_LINES,
     expand_file_refs,
     get_at_completions,
 )
-
 
 # ── expand_file_refs ──────────────────────────────────────────────────────────
 

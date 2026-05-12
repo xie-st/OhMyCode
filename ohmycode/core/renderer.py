@@ -15,7 +15,8 @@ event source.
 
 from __future__ import annotations
 
-from typing import AsyncIterator, Protocol, runtime_checkable
+from collections.abc import AsyncIterator
+from typing import Protocol, runtime_checkable
 
 from ohmycode.core.messages import (
     StreamEvent,
@@ -86,7 +87,7 @@ class DispatchingRenderer:
 
 
 async def drive_renderer(
-    renderer: "DispatchingRenderer",
+    renderer: DispatchingRenderer,
     events: AsyncIterator[StreamEvent],
 ) -> None:
     """Run the ``on_turn_start`` → ``on_event`` × N → ``on_turn_end`` lifecycle.

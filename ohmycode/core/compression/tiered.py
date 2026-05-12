@@ -14,7 +14,6 @@ from __future__ import annotations
 from ohmycode.core.compression.strategy import register_compression_strategy
 from ohmycode.core.context import ContextManager
 
-
 # An alias name keeps ``isinstance(strategy, TieredCompressionStrategy)``
 # working while collapsing the redundant wrapper class.
 TieredCompressionStrategy = ContextManager
