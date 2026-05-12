@@ -253,9 +253,14 @@ async def test_curator_replaces_topic_slices_when_requested():
 
 
 @pytest.mark.asyncio
-async def test_curator_ignores_invalid_json_without_marking_processed():
+async def test_curator_advances_watermark_on_malformed_json_and_records_pending():
+    """Malformed curator JSON used to leave the watermark unmoved, so the same
+    bad batch was retried forever. New behavior: advance the watermark, but
+    record the earliest event id of the failed batch in ``pending_reprocess_min_event_id``
+    so the next successful run still includes those events."""
     store = _store("curator_bad_json")
     store.append_event("user_message", "hello")
+    store.append_event("assistant_message", "hi")
 
     async def fake_curate(*args, **kwargs):
         return "not json"
@@ -263,7 +268,64 @@ async def test_curator_ignores_invalid_json_without_marking_processed():
     result = await ContextCurator(store, fake_curate).run_once()
 
     assert result.applied is False
-    assert store.get_last_processed_event_id() == 0
+    assert result.reason == "invalid_json"
+    assert store.get_last_processed_event_id() == 2
+    assert store.get_state("pending_reprocess_min_event_id") == "1"
+
+
+@pytest.mark.asyncio
+async def test_curator_reprocesses_pending_range_on_next_successful_run():
+    store = _store("curator_reprocess_pending")
+    store.append_event("user_message", "hello")
+    store.append_event("assistant_message", "hi")
+
+    async def bad_curate(*args, **kwargs):
+        return "not json"
+
+    await ContextCurator(store, bad_curate).run_once()
+    assert store.get_state("pending_reprocess_min_event_id") == "1"
+
+    store.append_event("user_message", "follow up")
+
+    topic_id = store.create_topic("test topic", summary="t")
+    store.set_state("active_topic_id", topic_id)
+
+    seen_event_ids: list[int] = []
+
+    async def good_curate(*, events, topics):
+        seen_event_ids.extend(e.id for e in events)
+        return '{"action":"keep","topic":{"id":"%s"}}' % topic_id
+
+    result = await ContextCurator(store, good_curate).run_once()
+
+    assert result.applied is True
+    assert seen_event_ids == [1, 2, 3]
+    assert store.get_state("pending_reprocess_min_event_id") == "0"
+    assert store.get_last_processed_event_id() == 3
+
+
+@pytest.mark.asyncio
+async def test_curator_two_consecutive_json_failures_keep_earliest_pending():
+    store = _store("curator_two_failures")
+    store.append_event("user_message", "a")
+    store.append_event("assistant_message", "b")
+
+    async def bad_curate(*args, **kwargs):
+        return "not json"
+
+    await ContextCurator(store, bad_curate).run_once()
+    assert store.get_state("pending_reprocess_min_event_id") == "1"
+    assert store.get_last_processed_event_id() == 2
+
+    store.append_event("user_message", "c")
+    store.append_event("assistant_message", "d")
+
+    await ContextCurator(store, bad_curate).run_once()
+
+    # Pending should remain pinned to the earliest failed batch start (1),
+    # not get overwritten by the newer batch start (3).
+    assert store.get_state("pending_reprocess_min_event_id") == "1"
+    assert store.get_last_processed_event_id() == 4
 
 
 @pytest.mark.asyncio

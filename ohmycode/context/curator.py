@@ -40,7 +40,13 @@ class ContextCurator:
 
     async def run_once(self) -> CuratorResult:
         last_id = self.store.get_last_processed_event_id()
+        pending = int(self.store.get_state("pending_reprocess_min_event_id", "0") or "0")
         events = self.store.list_events_after(last_id)
+        if pending > 0 and pending <= last_id:
+            reprocess = self.store.list_events_range(pending, last_id)
+            merged = {e.id: e for e in reprocess}
+            merged.update({e.id: e for e in events})
+            events = [merged[i] for i in sorted(merged)]
 
         # Self-heal: if the curator's high-water mark is past the end of the
         # event log (e.g. external truncation, project-slug collision, or
@@ -67,11 +73,21 @@ class ContextCurator:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
+            new_pending = events[0].id if pending == 0 else min(pending, events[0].id)
+            self.store.set_state("pending_reprocess_min_event_id", str(new_pending))
+            self.store.set_last_processed_event_id(events[-1].id)
+            logger.warning(
+                "curator returned invalid JSON; advancing watermark to %s, "
+                "pending_reprocess from %s",
+                events[-1].id,
+                new_pending,
+            )
             return CuratorResult(applied=False, reason="invalid_json")
 
         processed_event_id = events[-1].id
         self._apply(data, processed_event_id)
         self.store.set_last_processed_event_id(processed_event_id)
+        self.store.set_state("pending_reprocess_min_event_id", "0")
         return CuratorResult(applied=True)
 
     def _apply(self, data: dict, processed_event_id: int) -> None:
