@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -15,8 +16,13 @@ from rich import box as rich_box
 from rich.console import Console
 from rich.panel import Panel
 
-from ohmycode.config.config import load_config, OhMyCodeConfig
+from ohmycode._cli.confirm import confirm_tool_call
 from ohmycode._cli.context_flow import apply_context_projection
+from ohmycode._cli.output import ACCENT, render_stream
+from ohmycode._cli.prompt_session import build_prompt_session
+from ohmycode._cli.repl_commands import handle_slash_command
+from ohmycode._cli.welcome import build_repl_welcome_text
+from ohmycode.config.config import OhMyCodeConfig, load_config
 from ohmycode.context.compression import TopicCompressor
 from ohmycode.context.curator import ContextCurator, build_provider_curate_fn
 from ohmycode.context.runtime import ContextRuntime
@@ -25,13 +31,6 @@ from ohmycode.core.loop import ConversationLoop
 from ohmycode.core.messages import AssistantMessage, ToolResultMessage, ToolUseBlock
 from ohmycode.skills.loader import scan_skills
 from ohmycode.storage.conversation import load_conversation
-
-from ohmycode._cli.confirm import confirm_tool_call
-from ohmycode._cli.output import render_stream, ACCENT
-from ohmycode._cli.prompt_session import build_prompt_session
-from ohmycode._cli.repl_commands import handle_slash_command
-from ohmycode._cli.welcome import build_repl_welcome_text
-
 
 _console = Console()
 
@@ -158,11 +157,11 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
     def _schedule_context_curator() -> None:
         if context_runtime is None or config.context_curator == "off":
             return
-        if conv._provider is None:
+        if not conv.is_ready:
             return
         curator = ContextCurator(
             context_runtime.store,
-            build_provider_curate_fn(conv._provider, config.model),
+            build_provider_curate_fn(conv.provider, config.model),
         )
 
         async def _run_curator_then_compress():
@@ -175,11 +174,11 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
         context_runtime.request_curator_run(lambda: _run_curator_then_compress())
 
     def _schedule_topic_compression(topic_id: str) -> None:
-        if context_runtime is None or conv._provider is None or not topic_id:
+        if context_runtime is None or not conv.is_ready or not topic_id:
             return
         compressor = TopicCompressor(
             store=context_runtime.store,
-            provider=conv._provider,
+            provider=conv.provider,
             model=config.model,
             token_budget=config.token_budget,
             output_reserved=config.output_tokens_reserved,
@@ -257,18 +256,14 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
             cancel_event.clear()
             stop_polling.set()
             render_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await render_task
-            except asyncio.CancelledError:
-                pass
             return "cancelled"
         else:
             stop_polling.set()
             cancel_fut.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await cancel_fut
-            except (asyncio.CancelledError, Exception):
-                pass
             return render_task.result()
 
     while True:
@@ -336,14 +331,14 @@ async def run_repl(config_overrides: dict[str, Any], cancel_event: threading.Eve
             )
             prepared = context_runtime.prepare_for_turn(
                 expanded_input,
-                conv._system_prompt,
+                conv.system_prompt,
                 last_event_id=user_event_id,
             )
             system_prompt_override = apply_context_projection(
                 conv,
                 context_runtime,
                 prepared,
-                conv._system_prompt,
+                conv.system_prompt,
             )
         conv.add_user_message(expanded_input, image_blocks=image_blocks or None)
         context_start_idx = len(conv.messages)

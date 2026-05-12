@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
-import sys
+from collections.abc import AsyncIterator, Awaitable
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Awaitable, Callable
+from typing import Any, Callable
 
 from ohmycode.config.config import OhMyCodeConfig
+from ohmycode.core._loop_authorize import _AuthorizationMixin
 from ohmycode.core.compression import (
+    CompressionStrategy,
     auto_import_compression_strategies,
     get_compression_strategy,
 )
@@ -22,19 +25,18 @@ from ohmycode.core.messages import (
     StreamEvent,
     TextChunk,
     ThinkingChunk,
-    ToolCallResult,
+    TokenUsage,
     ToolCallStart,
     ToolCallStreaming,
-    ToolResultMessage,
     ToolUseBlock,
-    TokenUsage,
     TurnComplete,
     UserMessage,
 )
-from ohmycode.core.permissions import check_permission
 from ohmycode.core.system_prompt import build_system_prompt, find_project_instructions
-from ohmycode.providers.base import auto_import_providers, get_provider
-from ohmycode.tools.base import ToolContext, auto_import_tools, get_tool_defs, run_tool_calls
+from ohmycode.providers.base import Provider, auto_import_providers, get_provider
+from ohmycode.tools.base import ToolContext, auto_import_tools, get_tool_defs
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -49,7 +51,7 @@ class _RoundState:
     last_finish_reason: str = "stop"
 
 
-class ConversationLoop:
+class ConversationLoop(_AuthorizationMixin):
     """Core loop driving multi-turn conversation (including tool calls)."""
 
     def __init__(
@@ -61,12 +63,12 @@ class ConversationLoop:
         self.confirm_fn = confirm_fn
         self.messages: list[Message] = []
         self.auto_approved: dict[str, bool] = {}
-        self._cancelled: bool = False
-        self._provider: Any = None
+        self._cancel_event: asyncio.Event = asyncio.Event()
+        self._provider: Provider | None = None
         self._system_prompt: str = ""
         self.think: str | None = None
         auto_import_compression_strategies()
-        self._compression: Any = get_compression_strategy(
+        self._compression: CompressionStrategy = get_compression_strategy(
             config.compression_strategy,
             token_budget=config.token_budget,
             output_reserved=config.output_tokens_reserved,
@@ -91,6 +93,29 @@ class ConversationLoop:
     def set_event_bus(self, bus: EventBus | None) -> None:
         """Attach an EventBus (or detach by passing None)."""
         self.event_bus = bus
+
+    # ── Public accessors ─────────────────────────────────────────────────────
+
+    @property
+    def is_ready(self) -> bool:
+        """True once ``initialize()`` has wired up a provider."""
+        return self._provider is not None
+
+    @property
+    def provider(self) -> Provider | None:
+        return self._provider
+
+    @provider.setter
+    def provider(self, value: Provider | None) -> None:
+        self._provider = value
+
+    @property
+    def system_prompt(self) -> str:
+        return self._system_prompt
+
+    @system_prompt.setter
+    def system_prompt(self, value: str) -> None:
+        self._system_prompt = value
 
     # ── Setup ────────────────────────────────────────────────────────────────
 
@@ -133,9 +158,8 @@ class ConversationLoop:
             store.ensure_tree()
             memory_content = store.get_root_index()
         except Exception as exc:
-            print(
-                f"[memory] store unavailable: {type(exc).__name__}: {exc}",
-                file=sys.stderr,
+            logger.warning(
+                "memory store unavailable: %s: %s", type(exc).__name__, exc
             )
             mem_dir = ""
             memory_content = ""
@@ -160,8 +184,8 @@ class ConversationLoop:
             self.messages.append(UserMessage(content=content))
 
     def cancel(self) -> None:
-        """Set cancel flag so run_turn() exits on the next check."""
-        self._cancelled = True
+        """Signal run_turn() to exit on the next check."""
+        self._cancel_event.set()
 
     def get_status_snapshot(self) -> dict[str, Any]:
         """Return current conversation/context usage stats for /status."""
@@ -222,7 +246,7 @@ class ConversationLoop:
         allow_blocking_compression: bool = True,
     ) -> AsyncIterator[StreamEvent]:
         """Run one conversation turn (may include multiple tool round-trips)."""
-        self._cancelled = False
+        self._cancel_event.clear()
         turn_system_prompt = system_prompt_override or self._system_prompt
         turn_count = 0
         max_turns = self.config.max_turns
@@ -244,7 +268,7 @@ class ConversationLoop:
 
         round_state = _RoundState()
 
-        while turn_count < max_turns and not self._cancelled:
+        while turn_count < max_turns and not self._cancel_event.is_set():
             turn_count += 1
 
             if not await self._compress(turn_system_prompt, allow_blocking_compression):
@@ -264,11 +288,12 @@ class ConversationLoop:
                 yield TurnComplete(finish_reason="cancelled", usage=round_state.last_usage)
                 raise
             except Exception as e:
+                logger.exception("provider stream failed")
                 yield TextChunk(text=f"\n[API Error: {e}]\n")
                 yield TurnComplete(finish_reason="error", usage=TokenUsage(0, 0, 0))
                 return
 
-            if self._cancelled:
+            if self._cancel_event.is_set():
                 if round_state.collected_text:
                     self.messages.append(
                         AssistantMessage(content=round_state.collected_text, tool_calls=[])
@@ -336,15 +361,13 @@ class ConversationLoop:
             model=self.config.model,
             **stream_kwargs,
         ):
-            if self._cancelled:
+            if self._cancel_event.is_set():
                 break
 
             if isinstance(event, TextChunk):
                 round_state.collected_text += event.text
                 yield event
-            elif isinstance(event, ThinkingChunk):
-                yield event
-            elif isinstance(event, ToolCallStreaming):
+            elif isinstance(event, (ThinkingChunk, ToolCallStreaming)):
                 yield event
             elif isinstance(event, ToolCallStart):
                 round_state.collected_tool_calls.append(event)
@@ -369,118 +392,3 @@ class ConversationLoop:
             )
         )
 
-    async def _authorize_and_execute(
-        self,
-        tool_calls: list[ToolCallStart],
-        ctx: ToolContext,
-        sub_event_buffer: list[StreamEvent],
-    ) -> AsyncIterator[StreamEvent]:
-        """Permission check + execute permitted calls; record results.
-
-        On asyncio.CancelledError, fills placeholder results for any unanswered
-        tool_call_ids and re-raises (caller emits the final TurnComplete).
-        """
-        responded_ids: set[str] = set()
-        permitted_calls: list[dict] = []
-
-        try:
-            for tc in tool_calls:
-                async for ev in self._authorize_one(
-                    tc, permitted_calls, responded_ids
-                ):
-                    yield ev
-
-            if not permitted_calls:
-                return
-
-            results = await run_tool_calls(permitted_calls, ctx)
-
-            while sub_event_buffer:
-                yield sub_event_buffer.pop(0)
-
-            for call in permitted_calls:
-                tid = call["tool_use_id"]
-                tool_result = results[tid]
-                self.messages.append(
-                    ToolResultMessage(
-                        tool_use_id=tid,
-                        content=tool_result.output,
-                        is_error=tool_result.is_error,
-                    )
-                )
-                responded_ids.add(tid)
-                yield ToolCallResult(
-                    tool_use_id=tid,
-                    result=tool_result.output,
-                    is_error=tool_result.is_error,
-                )
-        except asyncio.CancelledError:
-            for tc in tool_calls:
-                if tc.tool_use_id not in responded_ids:
-                    self.messages.append(
-                        ToolResultMessage(
-                            tool_use_id=tc.tool_use_id,
-                            content="Cancelled by user.",
-                            is_error=False,
-                        )
-                    )
-            raise
-
-    async def _authorize_one(
-        self,
-        tc: ToolCallStart,
-        permitted_calls: list[dict],
-        responded_ids: set[str],
-    ) -> AsyncIterator[StreamEvent]:
-        """Run the permission ladder for a single tool call."""
-        perm = check_permission(
-            tool_name=tc.tool_name,
-            params=tc.params,
-            mode=self.config.mode,
-            rules=self.config.rules,
-            auto_approved=self.auto_approved,
-        )
-
-        call_dict = {
-            "tool_name": tc.tool_name,
-            "tool_use_id": tc.tool_use_id,
-            "params": tc.params,
-        }
-
-        if perm.action == "deny":
-            error_msg = f"Permission denied: {perm.reason}"
-            self._record_tool_error(tc.tool_use_id, error_msg, responded_ids)
-            yield ToolCallResult(
-                tool_use_id=tc.tool_use_id, result=error_msg, is_error=True
-            )
-            return
-
-        if perm.action == "ask" and self.confirm_fn is not None:
-            answer = (await self.confirm_fn(tc.tool_name, tc.params)).strip().lower()
-            if answer == "a":
-                self.auto_approved[tc.tool_name] = True
-                permitted_calls.append(call_dict)
-            elif answer == "y":
-                permitted_calls.append(call_dict)
-            else:
-                error_msg = "User denied tool execution."
-                self._record_tool_error(tc.tool_use_id, error_msg, responded_ids)
-                yield ToolCallResult(
-                    tool_use_id=tc.tool_use_id, result=error_msg, is_error=True
-                )
-            return
-
-        # allow (or "ask" without confirm_fn)
-        permitted_calls.append(call_dict)
-
-    def _record_tool_error(
-        self, tool_use_id: str, message: str, responded_ids: set[str]
-    ) -> None:
-        self.messages.append(
-            ToolResultMessage(
-                tool_use_id=tool_use_id,
-                content=message,
-                is_error=True,
-            )
-        )
-        responded_ids.add(tool_use_id)
