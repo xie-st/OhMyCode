@@ -11,11 +11,10 @@ const statusLabel = {
 
 interface WindowAProps {
   sendMessage(text: string): void
-  cancel(): void
   sendUserTyping(typing: boolean): void
 }
 
-export function WindowA({ sendMessage, cancel, sendUserTyping }: WindowAProps) {
+export function WindowA({ sendMessage, sendUserTyping }: WindowAProps) {
   const [draft, setDraft] = useState('')
   const [focused, setFocused] = useState(false)
   const messages = useAppStore((state) => state.messagesA)
@@ -34,9 +33,6 @@ export function WindowA({ sendMessage, cancel, sendUserTyping }: WindowAProps) {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       submit()
-    }
-    if (event.key === 'Escape') {
-      cancel()
     }
   }
 
@@ -71,6 +67,7 @@ export function WindowA({ sendMessage, cancel, sendUserTyping }: WindowAProps) {
             }}
             onKeyDown={onKeyDown}
             rows={3}
+            placeholder="Ask OhMyCode to inspect, edit, or explain the project..."
             className="min-h-20 flex-1 resize-none rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-cyan-500"
           />
           <button

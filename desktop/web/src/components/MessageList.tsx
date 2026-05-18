@@ -17,6 +17,17 @@ export function MessageList({ messages, role = 'all', tone = 'dark' }: MessageLi
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
+        {visibleMessages.length === 0 && (
+          <div
+            className={
+              tone === 'amber'
+                ? 'pt-8 text-sm text-stone-500'
+                : 'pt-8 text-sm text-zinc-500'
+            }
+          >
+            {tone === 'amber' ? 'Waiting for a safe moment...' : 'No messages yet.'}
+          </div>
+        )}
         {visibleMessages.map((message) => (
           <MessageBubble key={message.id} message={message} tone={tone} />
         ))}

@@ -14,3 +14,8 @@ app.add_middleware(
 )
 app.include_router(profile_router)
 app.include_router(ws_router)
+
+
+@app.on_event("startup")
+async def startup_banner() -> None:
+    print("OhMyCode Desktop server starting on ws://localhost:8765/ws")

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import { PermissionDialog } from './components/PermissionDialog'
 import { ProfileDrawer } from './components/ProfileDrawer'
@@ -13,6 +13,21 @@ export default function App() {
   const clearPendingPermission = useAppStore((state) => state.clearPendingPermission)
   const { sendMessage, cancel, sendUserTyping, sendPermissionResponse } = useWebSocket()
 
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') {
+        return
+      }
+      if (pendingPermission) {
+        return
+      }
+      cancel()
+    }
+
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [cancel, pendingPermission])
+
   return (
     <main className="h-screen bg-zinc-950 text-zinc-100">
       <button
@@ -25,7 +40,6 @@ export default function App() {
         <Panel defaultSize={60} minSize={30}>
           <WindowA
             sendMessage={sendMessage}
-            cancel={cancel}
             sendUserTyping={sendUserTyping}
           />
         </Panel>
