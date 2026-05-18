@@ -4,6 +4,7 @@ from inspect import isawaitable
 from typing import Any
 
 from desktop.server._serialize import serialize_event
+from desktop.server.growth_prompt import GROWTH_AGENT_PROMPT
 from ohmycode.config.config import OhMyCodeConfig
 from ohmycode.core.events import EventBus
 from ohmycode.core.loop import ConversationLoop
@@ -11,12 +12,6 @@ from ohmycode.core.messages import StreamEvent, ToolCallStart
 
 
 WsSend = Callable[[dict[str, Any]], Awaitable[None] | None]
-
-B_PLACEHOLDER_PROMPT = (
-    "You are a placeholder coaching agent. "
-    "M2.1 only verifies the wiring; M2.2 replaces this with the real "
-    "'小柚' persona prompt from growth_prompt.py."
-)
 
 
 def _pick_b_model(config: OhMyCodeConfig) -> str:
@@ -29,7 +24,7 @@ def _pick_b_model(config: OhMyCodeConfig) -> str:
 
 
 class DesktopSession:
-    """Desktop session with task Window A and placeholder coaching Window B."""
+    """Desktop session with task Window A and coaching Window B."""
 
     def __init__(self, config: OhMyCodeConfig, ws_send: WsSend) -> None:
         self.config = config
@@ -47,7 +42,7 @@ class DesktopSession:
                 "system_prompt_append": (
                     (config.system_prompt_append or "")
                     + "\n\n"
-                    + B_PLACEHOLDER_PROMPT
+                    + GROWTH_AGENT_PROMPT
                 ),
                 "model": _pick_b_model(config),
             }
@@ -90,7 +85,9 @@ class DesktopSession:
         if self._b_lock.locked():
             return
         async with self._b_lock:
-            observation = f"[观察] 主窗口正在执行 {reason}"
+            observation = (
+                f"[\u89c2\u5bdf] \u4e3b\u7a97\u53e3\u6b63\u5728\u6267\u884c {reason}"
+            )
             self.loop_b.add_user_message(observation)
             try:
                 async for _ in self.loop_b.stream_turn():
