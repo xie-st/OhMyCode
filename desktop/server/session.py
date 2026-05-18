@@ -1,10 +1,12 @@
 import asyncio
+import os
 from collections.abc import Awaitable, Callable
 from inspect import isawaitable
 from typing import Any
 
 from desktop.server._serialize import serialize_event
 from desktop.server.growth_prompt import GROWTH_AGENT_PROMPT
+from desktop.server.profile import UserProfile
 from ohmycode.config.config import OhMyCodeConfig
 from ohmycode.core.events import EventBus
 from ohmycode.core.loop import ConversationLoop
@@ -29,6 +31,7 @@ class DesktopSession:
     def __init__(self, config: OhMyCodeConfig, ws_send: WsSend) -> None:
         self.config = config
         self._ws_send = ws_send
+        self.profile = UserProfile.for_cwd(os.getcwd())
 
         self.bus_a = EventBus()
         self.bus_a.subscribe(self._on_event_a)
@@ -64,6 +67,7 @@ class DesktopSession:
             await result
 
     async def _on_event_a(self, event: StreamEvent) -> None:
+        self.profile.observe_event(event, "A")
         await self._send(serialize_event(event))
         if isinstance(event, ToolCallStart):
             self._schedule_b_trigger("tool_executing")
@@ -85,8 +89,10 @@ class DesktopSession:
         if self._b_lock.locked():
             return
         async with self._b_lock:
+            snapshot = self.profile.snapshot_for_b()
             observation = (
-                f"[\u89c2\u5bdf] \u4e3b\u7a97\u53e3\u6b63\u5728\u6267\u884c {reason}"
+                f"[Observation] Window A is running {reason}\n"
+                f"[Profile] {snapshot}"
             )
             self.loop_b.add_user_message(observation)
             try:
@@ -103,6 +109,7 @@ class DesktopSession:
         """Append user text and start a Window A turn if one is not active."""
         if self._turn_task and not self._turn_task.done():
             return
+        self.profile.observe_user_message(text)
         self.loop_a.add_user_message(text)
         self._turn_task = asyncio.create_task(self._run_turn())
 

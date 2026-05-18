@@ -52,5 +52,6 @@ async def test_b_lock_allows_only_one_active_b_turn(monkeypatch):
     await asyncio.wait_for(session._b_turn_task, timeout=1)
 
     assert instances[1].stream_started == 1
-    assert instances[1].messages == ["[观察] 主窗口正在执行 tool_executing"]
-
+    assert len(instances[1].messages) == 1
+    assert "[Observation] Window A is running tool_executing" in instances[1].messages[0]
+    assert "[Profile] User profile snapshot" in instances[1].messages[0]

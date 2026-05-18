@@ -68,5 +68,6 @@ async def test_tool_call_from_a_triggers_window_b_turn(monkeypatch):
         "data": {"text": "coaching note"},
         "window": "B",
     } in sent
-    assert instances[1].messages == ["[观察] 主窗口正在执行 tool_executing"]
-
+    assert len(instances[1].messages) == 1
+    assert "[Observation] Window A is running tool_executing" in instances[1].messages[0]
+    assert "[Profile] User profile snapshot" in instances[1].messages[0]
