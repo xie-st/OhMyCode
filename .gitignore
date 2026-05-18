@@ -69,3 +69,16 @@ _check_*.py
 
 # Per-machine Claude Code settings
 .claude/settings.local.json
+
+# Ad-hoc search/debug artifacts (not part of the project)
+search_*.py
+parse_*.py
+track_*.py
+baidu_*.html
+bing_*.html
+bing_*.txt
+bench_results.json
+
+# Codex transient outputs
+codex-result.txt
+
