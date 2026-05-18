@@ -28,7 +28,9 @@ interface AppState {
   messagesA: Message[]
   messagesB: Message[]
   bTrigger: string
+  userTyping: boolean
   setStatus(status: ConnectionStatus): void
+  setUserTyping(typing: boolean): void
   ingestEvent(event: StreamEvent): void
   appendUserMessage(text: string): void
 }
@@ -91,8 +93,11 @@ export const useAppStore = create<AppState>((set) => ({
   messagesA: [],
   messagesB: [],
   bTrigger: '',
+  userTyping: false,
 
   setStatus: (status) => set({ status }),
+
+  setUserTyping: (userTyping) => set({ userTyping }),
 
   appendUserMessage: (text) =>
     set((state) => ({

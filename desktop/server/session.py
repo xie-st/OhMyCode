@@ -10,10 +10,19 @@ from desktop.server.profile import UserProfile
 from ohmycode.config.config import OhMyCodeConfig
 from ohmycode.core.events import EventBus
 from ohmycode.core.loop import ConversationLoop
-from ohmycode.core.messages import StreamEvent, ToolCallStart
+from ohmycode.core.messages import (
+    StreamEvent,
+    ToolCallResult,
+    ToolCallStart,
+    TurnComplete,
+)
 
 
 WsSend = Callable[[dict[str, Any]], Awaitable[None] | None]
+B_TOOL_TRIGGER_DELAY_SECONDS = 3.0
+B_COOLDOWN_SECONDS = 60.0
+B_RATE_LIMIT_WINDOW_SECONDS = 600.0
+B_RATE_LIMIT_MAX_TRIGGERS = 5
 
 
 def _pick_b_model(config: OhMyCodeConfig) -> str:
@@ -60,6 +69,12 @@ class DesktopSession:
         self._turn_task: asyncio.Task | None = None
         self._b_turn_task: asyncio.Task | None = None
         self._b_lock = asyncio.Lock()
+        self._b_last_trigger_at: float = 0.0
+        self._b_trigger_times: list[float] = []
+        self._b_muted: bool = False
+        self._pending_tool_triggers: set[str] = set()
+        self._a_error_history: list[str] = []
+        self._background_tasks: set[asyncio.Task] = set()
 
     async def _send(self, payload: dict[str, Any]) -> None:
         result = self._ws_send(payload)
@@ -70,7 +85,24 @@ class DesktopSession:
         self.profile.observe_event(event, "A")
         await self._send(serialize_event(event))
         if isinstance(event, ToolCallStart):
-            self._schedule_b_trigger("tool_executing")
+            # Add to pending set synchronously here so a fast ToolCallResult
+            # arriving before the delayed task starts can still discard it.
+            self._pending_tool_triggers.add(event.tool_use_id)
+            self._track_background_task(
+                self._delayed_tool_trigger(event.tool_use_id, "tool_executing")
+            )
+        elif isinstance(event, ToolCallResult):
+            self._pending_tool_triggers.discard(event.tool_use_id)
+            if event.is_error:
+                self._a_error_history.append(event.result[:200])
+                self._a_error_history = self._a_error_history[-5:]
+                if (
+                    len(self._a_error_history) >= 2
+                    and self._a_error_history[-1] == self._a_error_history[-2]
+                ):
+                    self._schedule_b_trigger("repeated_error")
+        elif isinstance(event, TurnComplete):
+            self._schedule_b_trigger("turn_complete")
 
     async def _on_event_b(self, event: StreamEvent) -> None:
         await self._send_with_window(event, "B")
@@ -81,14 +113,47 @@ class DesktopSession:
         await self._send(payload)
 
     def _schedule_b_trigger(self, reason: str) -> None:
-        if self._b_turn_task and not self._b_turn_task.done():
-            return
-        self._b_turn_task = asyncio.create_task(self._maybe_trigger_b(reason))
+        self._track_background_task(self._maybe_trigger_b(reason))
+
+    def _track_background_task(self, coro: Awaitable[None]) -> None:
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def _delayed_tool_trigger(self, tool_use_id: str, reason: str) -> None:
+        await asyncio.sleep(B_TOOL_TRIGGER_DELAY_SECONDS)
+        if tool_use_id in self._pending_tool_triggers:
+            self._pending_tool_triggers.discard(tool_use_id)
+            await self._maybe_trigger_b(reason)
+
+    def set_b_muted(self, muted: bool) -> None:
+        self._b_muted = muted
+
+    def _b_trigger_allowed(self, now: float) -> bool:
+        if (now - self._b_last_trigger_at) < B_COOLDOWN_SECONDS:
+            return False
+        if self._b_muted:
+            return False
+        self._b_trigger_times = [
+            t
+            for t in self._b_trigger_times
+            if (now - t) < B_RATE_LIMIT_WINDOW_SECONDS
+        ]
+        return len(self._b_trigger_times) < B_RATE_LIMIT_MAX_TRIGGERS
 
     async def _maybe_trigger_b(self, reason: str) -> None:
         if self._b_lock.locked():
             return
+        now = asyncio.get_event_loop().time()
+        if not self._b_trigger_allowed(now):
+            return
         async with self._b_lock:
+            now = asyncio.get_event_loop().time()
+            if not self._b_trigger_allowed(now):
+                return
+            self._b_last_trigger_at = now
+            self._b_trigger_times.append(now)
+            self._b_turn_task = asyncio.current_task()
             snapshot = self.profile.snapshot_for_b()
             observation = (
                 f"[Observation] Window A is running {reason}\n"
@@ -125,6 +190,8 @@ class DesktopSession:
     async def cancel(self) -> None:
         await self._cancel_task(self._turn_task)
         await self._cancel_task(self._b_turn_task)
+        for task in list(self._background_tasks):
+            await self._cancel_task(task)
 
     async def _cancel_task(self, task: asyncio.Task | None) -> None:
         if not task or task.done():

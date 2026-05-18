@@ -51,6 +51,7 @@ async def test_on_event_serializes_text_chunk(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_on_event_serializes_tool_events_and_usage(monkeypatch):
+    monkeypatch.setattr("desktop.server.session.B_TOOL_TRIGGER_DELAY_SECONDS", 0.0)
     monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
     sent = []
     session = DesktopSession(OhMyCodeConfig(), sent.append)

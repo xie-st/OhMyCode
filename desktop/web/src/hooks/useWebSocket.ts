@@ -5,9 +5,11 @@ const WS_URL = 'ws://localhost:5173/ws'
 
 export function useWebSocket() {
   const socketRef = useRef<WebSocket | null>(null)
+  const unmuteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const ingestEvent = useAppStore((state) => state.ingestEvent)
   const appendUserMessage = useAppStore((state) => state.appendUserMessage)
   const setStatus = useAppStore((state) => state.setStatus)
+  const setUserTypingState = useAppStore((state) => state.setUserTyping)
 
   useEffect(() => {
     setStatus('connecting')
@@ -26,6 +28,9 @@ export function useWebSocket() {
     }
 
     return () => {
+      if (unmuteTimerRef.current) {
+        clearTimeout(unmuteTimerRef.current)
+      }
       socket.close()
       socketRef.current = null
     }
@@ -51,5 +56,30 @@ export function useWebSocket() {
     }
   }, [])
 
-  return { sendMessage, cancel }
+  const sendUserTyping = useCallback(
+    (typing: boolean) => {
+      if (unmuteTimerRef.current) {
+        clearTimeout(unmuteTimerRef.current)
+        unmuteTimerRef.current = null
+      }
+
+      const send = (nextTyping: boolean) => {
+        setUserTypingState(nextTyping)
+        const socket = socketRef.current
+        if (socket?.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'user_typing', data: { typing: nextTyping } }))
+        }
+      }
+
+      if (typing) {
+        send(true)
+        return
+      }
+
+      unmuteTimerRef.current = setTimeout(() => send(false), 300)
+    },
+    [setUserTypingState],
+  )
+
+  return { sendMessage, cancel, sendUserTyping }
 }

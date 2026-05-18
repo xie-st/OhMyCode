@@ -9,6 +9,7 @@ from ohmycode.core.messages import TextChunk, ToolCallStart
 
 @pytest.mark.asyncio
 async def test_b_lock_allows_only_one_active_b_turn(monkeypatch):
+    monkeypatch.setattr("desktop.server.session.B_TOOL_TRIGGER_DELAY_SECONDS", 0.0)
     instances = []
 
     class FakeLoop:
@@ -49,6 +50,10 @@ async def test_b_lock_allows_only_one_active_b_turn(monkeypatch):
 
     await session.handle_user_input("trigger tools")
     await asyncio.wait_for(session._turn_task, timeout=1)
+    for _ in range(5):
+        if session._b_turn_task is not None:
+            break
+        await asyncio.sleep(0)
     await asyncio.wait_for(session._b_turn_task, timeout=1)
 
     assert instances[1].stream_started == 1

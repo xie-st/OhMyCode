@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -108,17 +108,28 @@ class UserProfile:
         )
 
     def save(self) -> None:
-        """Persist with tempfile + os.replace so readers never see partial JSON."""
+        """Persist atomically: write a uniquely-named sibling then replace.
+
+        Falls back to direct write if os.replace hits a Windows file-lock
+        race (antivirus / indexer briefly holds the target during rapid
+        successive writes — observed under pytest's 25-message loop).
+        """
         if self._path is None:
             return
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        data = self._to_json_data()
-        with tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", dir=self._path.parent, delete=False, suffix=".tmp"
-        ) as temp_file:
-            json.dump(data, temp_file, ensure_ascii=False, indent=2)
-            tmp_name = temp_file.name
-        os.replace(tmp_name, self._path)
+        payload = json.dumps(self._to_json_data(), ensure_ascii=False, indent=2)
+        tmp_path = self._path.with_suffix(
+            f".tmp.{os.getpid()}.{time.time_ns()}"
+        )
+        tmp_path.write_text(payload, encoding="utf-8")
+        try:
+            os.replace(tmp_path, self._path)
+        except PermissionError:
+            self._path.write_text(payload, encoding="utf-8")
+            try:
+                tmp_path.unlink()
+            except FileNotFoundError:
+                pass
 
     def _observe_skills(self, text_lc: str) -> None:
         for skill, keywords in KEYWORD_SKILLS.items():

@@ -18,6 +18,7 @@ async def _wait_until(predicate, timeout=1.0):
 
 @pytest.mark.asyncio
 async def test_tool_call_from_a_triggers_window_b_turn(monkeypatch):
+    monkeypatch.setattr("desktop.server.session.B_TOOL_TRIGGER_DELAY_SECONDS", 0.01)
     instances = []
 
     class FakeLoop:

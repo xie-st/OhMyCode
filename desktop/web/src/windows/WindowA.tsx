@@ -12,14 +12,18 @@ const statusLabel = {
 
 export function WindowA() {
   const [draft, setDraft] = useState('')
+  const [focused, setFocused] = useState(false)
   const messages = useAppStore((state) => state.messagesA)
   const status = useAppStore((state) => state.status)
-  const { sendMessage, cancel } = useWebSocket()
+  const { sendMessage, cancel, sendUserTyping } = useWebSocket()
 
   const submit = (event?: FormEvent) => {
     event?.preventDefault()
     sendMessage(draft)
     setDraft('')
+    if (!focused) {
+      sendUserTyping(false)
+    }
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -47,7 +51,20 @@ export function WindowA() {
         <div className="mx-auto flex max-w-4xl gap-2">
           <textarea
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              setDraft(event.target.value)
+              if (focused) {
+                sendUserTyping(true)
+              }
+            }}
+            onFocus={() => {
+              setFocused(true)
+              sendUserTyping(true)
+            }}
+            onBlur={() => {
+              setFocused(false)
+              sendUserTyping(false)
+            }}
             onKeyDown={onKeyDown}
             rows={3}
             className="min-h-20 flex-1 resize-none rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-cyan-500"
