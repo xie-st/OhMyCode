@@ -20,11 +20,14 @@ export interface Message {
 interface StreamEvent {
   type: string
   data: Record<string, unknown>
+  window?: 'A' | 'B'
 }
 
 interface AppState {
   status: ConnectionStatus
-  messages: Message[]
+  messagesA: Message[]
+  messagesB: Message[]
+  bTrigger: string
   setStatus(status: ConnectionStatus): void
   ingestEvent(event: StreamEvent): void
   appendUserMessage(text: string): void
@@ -40,68 +43,82 @@ const ensureAssistant = (messages: Message[]) => {
   return [...messages, { id: makeId(), role: 'assistant', text: '', toolCalls: [] }]
 }
 
+const ingestMessageEvent = (messages: Message[], event: StreamEvent) => {
+  if (event.type === 'TextChunk') {
+    const nextMessages = ensureAssistant(messages)
+    const last = nextMessages[nextMessages.length - 1]
+    return [
+      ...nextMessages.slice(0, -1),
+      { ...last, text: `${last.text}${String(event.data.text ?? '')}` },
+    ]
+  }
+
+  if (event.type === 'ToolCallStart') {
+    const nextMessages = ensureAssistant(messages)
+    const last = nextMessages[nextMessages.length - 1]
+    const toolCalls = [
+      ...(last.toolCalls ?? []),
+      {
+        id: String(event.data.tool_use_id ?? ''),
+        name: String(event.data.tool_name ?? ''),
+        params: event.data.params ?? {},
+      },
+    ]
+    return [...nextMessages.slice(0, -1), { ...last, toolCalls }]
+  }
+
+  if (event.type === 'ToolCallResult') {
+    const nextMessages = ensureAssistant(messages)
+    const last = nextMessages[nextMessages.length - 1]
+    const toolId = String(event.data.tool_use_id ?? '')
+    const toolCalls = (last.toolCalls ?? []).map((call) =>
+      call.id === toolId
+        ? {
+            ...call,
+            result: String(event.data.result ?? ''),
+            isError: Boolean(event.data.is_error),
+          }
+        : call,
+    )
+    return [...nextMessages.slice(0, -1), { ...last, toolCalls }]
+  }
+
+  return messages
+}
+
 export const useAppStore = create<AppState>((set) => ({
   status: 'connecting',
-  messages: [],
+  messagesA: [],
+  messagesB: [],
+  bTrigger: '',
 
   setStatus: (status) => set({ status }),
 
   appendUserMessage: (text) =>
     set((state) => ({
-      messages: [...state.messages, { id: makeId(), role: 'user', text }],
+      messagesA: [...state.messagesA, { id: makeId(), role: 'user', text }],
     })),
 
   ingestEvent: (event) =>
     set((state) => {
-      if (event.type === 'TextChunk') {
-        const messages = ensureAssistant(state.messages)
-        const last = messages[messages.length - 1]
-        return {
-          messages: [
-            ...messages.slice(0, -1),
-            { ...last, text: `${last.text}${String(event.data.text ?? '')}` },
-          ],
+      if (event.type === 'error') {
+        return { status: 'error' }
+      }
+
+      if (event.window === 'B') {
+        if (event.type === 'TurnComplete') {
+          return { bTrigger: '' }
         }
-      }
-
-      if (event.type === 'ToolCallStart') {
-        const messages = ensureAssistant(state.messages)
-        const last = messages[messages.length - 1]
-        const toolCalls = [
-          ...(last.toolCalls ?? []),
-          {
-            id: String(event.data.tool_use_id ?? ''),
-            name: String(event.data.tool_name ?? ''),
-            params: event.data.params ?? {},
-          },
-        ]
-        return { messages: [...messages.slice(0, -1), { ...last, toolCalls }] }
-      }
-
-      if (event.type === 'ToolCallResult') {
-        const messages = ensureAssistant(state.messages)
-        const last = messages[messages.length - 1]
-        const toolId = String(event.data.tool_use_id ?? '')
-        const toolCalls = (last.toolCalls ?? []).map((call) =>
-          call.id === toolId
-            ? {
-                ...call,
-                result: String(event.data.result ?? ''),
-                isError: Boolean(event.data.is_error),
-              }
-            : call,
-        )
-        return { messages: [...messages.slice(0, -1), { ...last, toolCalls }] }
+        return {
+          messagesB: ingestMessageEvent(state.messagesB, event),
+          bTrigger: event.type === 'TextChunk' ? '讲解中' : state.bTrigger,
+        }
       }
 
       if (event.type === 'TurnComplete') {
         return state
       }
 
-      if (event.type === 'error') {
-        return { status: 'error' }
-      }
-
-      return state
+      return { messagesA: ingestMessageEvent(state.messagesA, event) }
     }),
 }))

@@ -1,6 +1,5 @@
 import { FormEvent, KeyboardEvent, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import rehypeHighlight from 'rehype-highlight'
+import { MessageList } from '../components/MessageList'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { useAppStore } from '../state/store'
 
@@ -11,9 +10,9 @@ const statusLabel = {
   error: 'Error',
 }
 
-export default function WindowA() {
+export function WindowA() {
   const [draft, setDraft] = useState('')
-  const messages = useAppStore((state) => state.messages)
+  const messages = useAppStore((state) => state.messagesA)
   const status = useAppStore((state) => state.status)
   const { sendMessage, cancel } = useWebSocket()
 
@@ -42,45 +41,7 @@ export default function WindowA() {
         </span>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
-        <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
-          {messages.map((message) => (
-            <article
-              key={message.id}
-              className={
-                message.role === 'user'
-                  ? 'self-end rounded border border-emerald-700 bg-emerald-950 px-3 py-2 text-sm text-emerald-50'
-                  : 'w-full text-sm leading-6 text-zinc-100'
-              }
-            >
-              {message.role === 'assistant' ? (
-                <ReactMarkdown rehypePlugins={[rehypeHighlight]}>
-                  {message.text || ' '}
-                </ReactMarkdown>
-              ) : (
-                message.text
-              )}
-
-              {message.toolCalls?.map((tool) => (
-                <div
-                  key={tool.id}
-                  className="mt-3 rounded border border-zinc-800 bg-zinc-900 p-3 text-xs text-zinc-300"
-                >
-                  <div className="font-medium text-cyan-300">{tool.name}</div>
-                  <pre className="mt-2 text-zinc-400">
-                    {JSON.stringify(tool.params, null, 2)}
-                  </pre>
-                  {tool.result !== undefined && (
-                    <pre className={tool.isError ? 'mt-2 text-red-300' : 'mt-2 text-zinc-200'}>
-                      {tool.result}
-                    </pre>
-                  )}
-                </div>
-              ))}
-            </article>
-          ))}
-        </div>
-      </div>
+      <MessageList messages={messages} />
 
       <form onSubmit={submit} className="shrink-0 border-t border-zinc-800 p-4">
         <div className="mx-auto flex max-w-4xl gap-2">
@@ -103,3 +64,5 @@ export default function WindowA() {
     </section>
   )
 }
+
+export default WindowA
