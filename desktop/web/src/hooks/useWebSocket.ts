@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { useAppStore } from '../state/store'
+import { useAppStore, type PermissionAnswer } from '../state/store'
 
 const WS_URL = 'ws://localhost:5173/ws'
 
@@ -56,6 +56,18 @@ export function useWebSocket() {
     }
   }, [])
 
+  const sendPermissionResponse = useCallback((requestId: string, answer: PermissionAnswer) => {
+    const socket = socketRef.current
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(
+        JSON.stringify({
+          type: 'permission_response',
+          data: { request_id: requestId, answer },
+        }),
+      )
+    }
+  }, [])
+
   const sendUserTyping = useCallback(
     (typing: boolean) => {
       if (unmuteTimerRef.current) {
@@ -81,5 +93,5 @@ export function useWebSocket() {
     [setUserTypingState],
   )
 
-  return { sendMessage, cancel, sendUserTyping }
+  return { sendMessage, cancel, sendUserTyping, sendPermissionResponse }
 }

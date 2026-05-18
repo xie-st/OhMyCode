@@ -1,5 +1,6 @@
 import asyncio
 import os
+import uuid
 from collections.abc import Awaitable, Callable
 from inspect import isawaitable
 from typing import Any
@@ -24,6 +25,7 @@ B_TOOL_TRIGGER_DELAY_SECONDS = 3.0
 B_COOLDOWN_SECONDS = 60.0
 B_RATE_LIMIT_WINDOW_SECONDS = 600.0
 B_RATE_LIMIT_MAX_TRIGGERS = 5
+PERMISSION_TIMEOUT_SECONDS = 30.0
 
 
 def _pick_b_model(config: OhMyCodeConfig) -> str:
@@ -42,11 +44,13 @@ class DesktopSession:
         self.config = config
         self._ws_send = ws_send
         self.profile = UserProfile.for_cwd(os.getcwd())
+        self._pending_perms: dict[str, asyncio.Future[str]] = {}
+        self._auto_approved_tools: set[str] = set()
 
         self.bus_a = EventBus()
         self.bus_a.subscribe(self._on_event_a)
 
-        self.loop_a = ConversationLoop(config=config)
+        self.loop_a = ConversationLoop(config=config, confirm_fn=self._make_confirm_fn("A"))
         self.loop_a.initialize()
         self.loop_a.set_event_bus(self.bus_a)
 
@@ -63,7 +67,7 @@ class DesktopSession:
         self.bus_b = EventBus()
         self.bus_b.subscribe(self._on_event_b)
 
-        self.loop_b = ConversationLoop(config=b_config)
+        self.loop_b = ConversationLoop(config=b_config, confirm_fn=self._make_confirm_fn("B"))
         self.loop_b.initialize()
         self.loop_b.set_event_bus(self.bus_b)
 
@@ -82,6 +86,46 @@ class DesktopSession:
         result = self._ws_send(payload)
         if isawaitable(result):
             await result
+
+    def _make_confirm_fn(self, window_id: str) -> Callable[[str, dict], Awaitable[str]]:
+        async def confirm(tool_name: str, params: dict) -> str:
+            if tool_name in self._auto_approved_tools:
+                return "y"
+
+            request_id = uuid.uuid4().hex
+            fut: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+            self._pending_perms[request_id] = fut
+            await self._send(
+                {
+                    "type": "permission_request",
+                    "data": {
+                        "request_id": request_id,
+                        "window": window_id,
+                        "tool_name": tool_name,
+                        "params": params,
+                    },
+                }
+            )
+
+            try:
+                answer = await asyncio.wait_for(fut, timeout=PERMISSION_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                answer = "n"
+            finally:
+                self._pending_perms.pop(request_id, None)
+
+            if answer == "a":
+                self._auto_approved_tools.add(tool_name)
+            return answer
+
+        return confirm
+
+    def resolve_permission(self, request_id: str, answer: str) -> bool:
+        fut = self._pending_perms.get(request_id)
+        if fut is None or fut.done():
+            return False
+        fut.set_result(answer.strip().lower())
+        return True
 
     async def _on_event_a(self, event: StreamEvent) -> None:
         self.profile.observe_event(event, "A")

@@ -1,11 +1,17 @@
 import { useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
+import { PermissionDialog } from './components/PermissionDialog'
 import { ProfileDrawer } from './components/ProfileDrawer'
+import { useWebSocket } from './hooks/useWebSocket'
+import { useAppStore } from './state/store'
 import { WindowA } from './windows/WindowA'
 import { WindowB } from './windows/WindowB'
 
 export default function App() {
   const [showProfile, setShowProfile] = useState(false)
+  const pendingPermission = useAppStore((state) => state.pendingPermission)
+  const clearPendingPermission = useAppStore((state) => state.clearPendingPermission)
+  const { sendMessage, cancel, sendUserTyping, sendPermissionResponse } = useWebSocket()
 
   return (
     <main className="h-screen bg-zinc-950 text-zinc-100">
@@ -17,7 +23,11 @@ export default function App() {
       </button>
       <PanelGroup direction="horizontal">
         <Panel defaultSize={60} minSize={30}>
-          <WindowA />
+          <WindowA
+            sendMessage={sendMessage}
+            cancel={cancel}
+            sendUserTyping={sendUserTyping}
+          />
         </Panel>
         <PanelResizeHandle className="w-1 cursor-col-resize bg-zinc-300 hover:bg-zinc-400" />
         <Panel defaultSize={40} minSize={20}>
@@ -25,6 +35,15 @@ export default function App() {
         </Panel>
       </PanelGroup>
       <ProfileDrawer open={showProfile} onClose={() => setShowProfile(false)} />
+      {pendingPermission && (
+        <PermissionDialog
+          request={pendingPermission}
+          onResponse={(answer) => {
+            sendPermissionResponse(pendingPermission.request_id, answer)
+            clearPendingPermission()
+          }}
+        />
+      )}
     </main>
   )
 }

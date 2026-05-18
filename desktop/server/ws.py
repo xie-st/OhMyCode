@@ -48,6 +48,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             elif message_type == "user_typing":
                 is_typing = bool(payload.get("data", {}).get("typing", False))
                 session.set_b_muted(is_typing)
+            elif message_type == "permission_response":
+                data = payload.get("data", {})
+                request_id = str(data.get("request_id", ""))
+                answer = str(data.get("answer", "n"))
+                session.resolve_permission(request_id, answer)
             elif message_type == "cancel":
                 await session.cancel()
             else:

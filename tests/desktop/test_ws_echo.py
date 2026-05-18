@@ -8,6 +8,7 @@ class FakeSession:
     inputs = []
     cancelled = 0
     muted = []
+    permissions = []
 
     def __init__(self, config, ws_send):
         self.config = config
@@ -22,20 +23,32 @@ class FakeSession:
     def set_b_muted(self, muted):
         type(self).muted.append(muted)
 
+    def resolve_permission(self, request_id, answer):
+        type(self).permissions.append((request_id, answer))
+        return True
+
 
 def test_ws_routes_user_input(monkeypatch):
     FakeSession.inputs = []
     FakeSession.cancelled = 0
     FakeSession.muted = []
+    FakeSession.permissions = []
     monkeypatch.setattr(ws_module, "DesktopSession", FakeSession)
 
     with TestClient(app).websocket_connect("/ws") as websocket:
         websocket.send_json({"type": "user_input", "data": {"text": "hello"}})
         websocket.send_json({"type": "user_typing", "data": {"typing": True}})
+        websocket.send_json(
+            {
+                "type": "permission_response",
+                "data": {"request_id": "req-1", "answer": "a"},
+            }
+        )
         websocket.send_json({"type": "cancel"})
 
     assert FakeSession.inputs == ["hello"]
     assert FakeSession.muted == [True]
+    assert FakeSession.permissions == [("req-1", "a")]
     assert FakeSession.cancelled >= 1
 
 

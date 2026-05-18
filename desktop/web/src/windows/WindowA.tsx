@@ -1,6 +1,5 @@
 import { FormEvent, KeyboardEvent, useState } from 'react'
 import { MessageList } from '../components/MessageList'
-import { useWebSocket } from '../hooks/useWebSocket'
 import { useAppStore } from '../state/store'
 
 const statusLabel = {
@@ -10,12 +9,17 @@ const statusLabel = {
   error: 'Error',
 }
 
-export function WindowA() {
+interface WindowAProps {
+  sendMessage(text: string): void
+  cancel(): void
+  sendUserTyping(typing: boolean): void
+}
+
+export function WindowA({ sendMessage, cancel, sendUserTyping }: WindowAProps) {
   const [draft, setDraft] = useState('')
   const [focused, setFocused] = useState(false)
   const messages = useAppStore((state) => state.messagesA)
   const status = useAppStore((state) => state.status)
-  const { sendMessage, cancel, sendUserTyping } = useWebSocket()
 
   const submit = (event?: FormEvent) => {
     event?.preventDefault()

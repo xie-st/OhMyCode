@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed' | 'error'
+export type PermissionAnswer = 'y' | 'a' | 'n'
 
 export interface ToolCall {
   id: string
@@ -41,6 +42,13 @@ export interface Profile {
   interaction_style: Record<string, unknown>
 }
 
+export interface PermissionRequest {
+  request_id: string
+  tool_name: string
+  params: Record<string, unknown>
+  window: 'A' | 'B'
+}
+
 interface StreamEvent {
   type: string
   data: Record<string, unknown>
@@ -54,8 +62,10 @@ interface AppState {
   bTrigger: string
   profile: Profile | null
   userTyping: boolean
+  pendingPermission: PermissionRequest | null
   setStatus(status: ConnectionStatus): void
   setUserTyping(typing: boolean): void
+  clearPendingPermission(): void
   fetchProfile(): Promise<void>
   deleteEvidence(evidenceId: string): Promise<void>
   clearProfile(): Promise<void>
@@ -123,10 +133,13 @@ export const useAppStore = create<AppState>((set) => ({
   bTrigger: '',
   profile: null,
   userTyping: false,
+  pendingPermission: null,
 
   setStatus: (status) => set({ status }),
 
   setUserTyping: (userTyping) => set({ userTyping }),
+
+  clearPendingPermission: () => set({ pendingPermission: null }),
 
   fetchProfile: async () => {
     const response = await fetch('/api/profile')
@@ -162,6 +175,17 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => {
       if (event.type === 'error') {
         return { status: 'error' }
+      }
+
+      if (event.type === 'permission_request') {
+        return {
+          pendingPermission: {
+            request_id: String(event.data.request_id ?? ''),
+            tool_name: String(event.data.tool_name ?? ''),
+            params: (event.data.params ?? {}) as Record<string, unknown>,
+            window: event.data.window === 'B' ? 'B' : 'A',
+          },
+        }
       }
 
       if (event.window === 'B') {
