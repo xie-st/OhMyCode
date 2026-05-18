@@ -7,8 +7,10 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from ohmycode.core.messages import StreamEvent, ToolCallStart
 from ohmycode.memory.backend import (
@@ -29,6 +31,30 @@ KEYWORD_SKILLS = {
     "backend": ["api", "server", "fastapi", "endpoint", "websocket"],
 }
 
+CORE_CONCEPTS = {
+    "py.async": "Python async/await and asyncio",
+    "py.errors": "Python exceptions and error handling",
+    "py.testing": "Python testing and mocking",
+    "py.typing": "Python type annotations and schemas",
+    "se.refactor": "Software refactoring patterns",
+    "se.debugging": "Systematic debugging",
+    "se.trade_offs": "Engineering tradeoffs",
+    "ohmycode.event_loop": "OhMyCode asyncio event loop",
+    "ohmycode.tools": "OhMyCode tool execution pipeline",
+}
+
+CONCEPT_KEYWORDS = {
+    "py.async": ("async", "await", "asyncio", "\u5f02\u6b65", "\u534f\u7a0b"),
+    "py.errors": ("except", "raise", "error", "exception", "\u62a5\u9519"),
+    "py.testing": ("pytest", "mock", "fixture", "test", "\u6d4b\u8bd5"),
+    "py.typing": ("type", "annotation", "pydantic", "\u7c7b\u578b"),
+    "se.refactor": ("refactor", "rename", "extract", "\u91cd\u6784"),
+    "se.debugging": ("debug", "trace", "print", "\u8c03\u8bd5"),
+    "se.trade_offs": ("tradeoff", "tradeoffs", "performance", "\u53d6\u820d"),
+    "ohmycode.event_loop": ("event_bus", "stream_turn", "\u4e8b\u4ef6\u5faa\u73af"),
+    "ohmycode.tools": ("tool_call", "tool_use", "tools/", "\u5de5\u5177"),
+}
+
 GAP_TRIGGERS = (
     "\u4e0d\u61c2",
     "\u4e0d\u4f1a",
@@ -45,6 +71,7 @@ GAP_TRIGGERS = (
 PROFILE_FIELDS = {
     "cwd",
     "skills",
+    "concepts",
     "interests",
     "knowledge_gaps",
     "recent_messages",
@@ -56,6 +83,7 @@ PROFILE_FIELDS = {
 class UserProfile:
     cwd: str
     skills: dict[str, dict[str, Any]] = field(default_factory=dict)
+    concepts: dict[str, dict[str, Any]] = field(default_factory=dict)
     interests: list[str] = field(default_factory=list)
     knowledge_gaps: list[dict[str, str]] = field(default_factory=list)
     recent_messages: list[str] = field(default_factory=list)
@@ -78,7 +106,10 @@ class UserProfile:
     def observe_user_message(self, text: str) -> None:
         """Capture a user message and persist the updated profile."""
         with self._lock:
-            self._observe_skills(text.lower())
+            text_lc = text.lower()
+            is_gap = _is_gap_text(text, text_lc)
+            self._observe_skills(text_lc)
+            self._observe_concepts(text, text_lc, is_gap)
             self._observe_gap(text)
             self._remember_message(text)
             self.save()
@@ -89,9 +120,10 @@ class UserProfile:
             return
         with self._lock:
             self._observe_tool(event.tool_name.lower())
+            self._observe_concepts(event.tool_name, event.tool_name.lower(), False)
             self.save()
 
-    def snapshot_for_b(self) -> str:
+    def snapshot_for_b(self, current_text: str = "") -> str:
         """Render a compact profile snapshot for Window B."""
         top_skills = sorted(
             self.skills.items(),
@@ -100,12 +132,44 @@ class UserProfile:
         )[:3]
         skills = _format_skills(top_skills)
         gaps = _format_gaps(self.knowledge_gaps[-2:])
+        concepts = self._active_concepts_snapshot(current_text)
         avg_len = self.interaction_style.get("avg_msg_len", 0)
         style = "concise" if avg_len < 80 else "detailed"
         return (
             "User profile snapshot: "
-            f"skills={skills}; knowledge_gaps={gaps}; interaction_style={style}"
+            f"skills={skills}; knowledge_gaps={gaps}; interaction_style={style}; "
+            f"active_concepts={concepts}"
         )
+
+    def delete_evidence(self, evidence_id: str) -> bool:
+        deleted = False
+        with self._lock:
+            for concept in self.concepts.values():
+                evidence = concept.get("evidence", [])
+                kept = [item for item in evidence if item.get("id") != evidence_id]
+                if len(kept) != len(evidence):
+                    concept["evidence"] = kept
+                    _recompute_concept(concept)
+                    deleted = True
+            kept_gaps = [
+                gap for gap in self.knowledge_gaps if gap.get("id") != evidence_id
+            ]
+            if len(kept_gaps) != len(self.knowledge_gaps):
+                self.knowledge_gaps = kept_gaps
+                deleted = True
+            if deleted:
+                self.save()
+        return deleted
+
+    def clear(self) -> None:
+        with self._lock:
+            self.skills = {}
+            self.concepts = {}
+            self.interests = []
+            self.knowledge_gaps = []
+            self.recent_messages = []
+            self.interaction_style = {}
+            self.save()
 
     def save(self) -> None:
         """Persist atomically: write a uniquely-named sibling then replace.
@@ -142,10 +206,17 @@ class UserProfile:
             if any(keyword in tool_name for keyword in keywords):
                 _bump_skill(self.skills, skill, 1)
 
+    def _observe_concepts(self, context: str, text_lc: str, is_gap: bool) -> None:
+        for concept_id, keywords in CONCEPT_KEYWORDS.items():
+            if any(keyword in text_lc for keyword in keywords):
+                _add_concept_evidence(self.concepts, concept_id, context, is_gap)
+
     def _observe_gap(self, text: str) -> None:
         text_lc = text.lower()
-        if any(trigger in text_lc or trigger in text for trigger in GAP_TRIGGERS):
-            self.knowledge_gaps.append({"text": text[:120]})
+        if _is_gap_text(text, text_lc):
+            self.knowledge_gaps.append(
+                {"id": uuid4().hex, "text": text[:120], "ts": _now_iso()}
+            )
             self.knowledge_gaps = self.knowledge_gaps[-30:]
 
     def _remember_message(self, text: str) -> None:
@@ -158,11 +229,23 @@ class UserProfile:
         return {
             "cwd": self.cwd,
             "skills": self.skills,
+            "concepts": self.concepts,
             "interests": self.interests,
             "knowledge_gaps": self.knowledge_gaps,
             "recent_messages": self.recent_messages,
             "interaction_style": self.interaction_style,
         }
+
+    def _active_concepts_snapshot(self, current_text: str) -> str:
+        text_lc = current_text.lower()
+        active_concepts = []
+        for concept_id, keywords in CONCEPT_KEYWORDS.items():
+            if concept_id not in self.concepts:
+                continue
+            if any(keyword in text_lc for keyword in keywords):
+                level = self.concepts[concept_id].get("level", 0)
+                active_concepts.append(f"{concept_id}(lvl {level})")
+        return ", ".join(active_concepts) or "(none active)"
 
 
 def _load_profile(path: Path, fallback_cwd: str) -> UserProfile:
@@ -179,6 +262,49 @@ def _bump_skill(skills: dict[str, dict[str, Any]], skill: str, count: int) -> No
     entry = skills.setdefault(skill, {"level": 0.0, "evidence_count": 0})
     entry["evidence_count"] = entry.get("evidence_count", 0) + count
     entry["level"] = min(2.0, entry.get("level", 0.0) + 0.1 * count)
+
+
+def _add_concept_evidence(
+    concepts: dict[str, dict[str, Any]], concept_id: str, context: str, is_gap: bool
+) -> None:
+    entry = concepts.setdefault(
+        concept_id,
+        {"level": 0, "evidence_count": 0, "last_seen": "", "evidence_ids": []},
+    )
+    evidence = entry.setdefault("evidence", [])
+    item = {
+        "id": uuid4().hex,
+        "ts": _now_iso(),
+        "context": context[:100],
+        "is_gap": is_gap,
+    }
+    evidence.append(item)
+    entry["evidence"] = evidence[-50:]
+    _recompute_concept(entry)
+
+
+def _recompute_concept(entry: dict[str, Any]) -> None:
+    evidence = entry.get("evidence", [])[-50:]
+    clean_count = sum(1 for item in evidence if not item.get("is_gap", False))
+    if clean_count >= 5:
+        level = 2
+    elif clean_count >= 3:
+        level = 1
+    else:
+        level = 0
+    entry["evidence"] = evidence
+    entry["evidence_count"] = len(evidence)
+    entry["level"] = level
+    entry["evidence_ids"] = [item.get("id", "") for item in evidence if item.get("id")]
+    entry["last_seen"] = evidence[-1].get("ts", "") if evidence else ""
+
+
+def _is_gap_text(text: str, text_lc: str) -> bool:
+    return any(trigger in text_lc or trigger in text for trigger in GAP_TRIGGERS)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _format_skills(top_skills: list[tuple[str, dict[str, Any]]]) -> str:

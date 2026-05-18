@@ -12,6 +12,7 @@ from ohmycode.core.events import EventBus
 from ohmycode.core.loop import ConversationLoop
 from ohmycode.core.messages import (
     StreamEvent,
+    TextChunk,
     ToolCallResult,
     ToolCallStart,
     TurnComplete,
@@ -74,6 +75,7 @@ class DesktopSession:
         self._b_muted: bool = False
         self._pending_tool_triggers: set[str] = set()
         self._a_error_history: list[str] = []
+        self._a_last_text: str = ""
         self._background_tasks: set[asyncio.Task] = set()
 
     async def _send(self, payload: dict[str, Any]) -> None:
@@ -101,6 +103,8 @@ class DesktopSession:
                     and self._a_error_history[-1] == self._a_error_history[-2]
                 ):
                     self._schedule_b_trigger("repeated_error")
+        elif isinstance(event, TextChunk):
+            self._a_last_text = f"{self._a_last_text}{event.text}"[-4000:]
         elif isinstance(event, TurnComplete):
             self._schedule_b_trigger("turn_complete")
 
@@ -154,7 +158,7 @@ class DesktopSession:
             self._b_last_trigger_at = now
             self._b_trigger_times.append(now)
             self._b_turn_task = asyncio.current_task()
-            snapshot = self.profile.snapshot_for_b()
+            snapshot = self.profile.snapshot_for_b(current_text=self._a_last_text)
             observation = (
                 f"[Observation] Window A is running {reason}\n"
                 f"[Profile] {snapshot}"
@@ -175,6 +179,7 @@ class DesktopSession:
         if self._turn_task and not self._turn_task.done():
             return
         self.profile.observe_user_message(text)
+        self._a_last_text = ""
         self.loop_a.add_user_message(text)
         self._turn_task = asyncio.create_task(self._run_turn())
 

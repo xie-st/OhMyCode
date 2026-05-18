@@ -1,10 +1,20 @@
+import { useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
+import { ProfileDrawer } from './components/ProfileDrawer'
 import { WindowA } from './windows/WindowA'
 import { WindowB } from './windows/WindowB'
 
 export default function App() {
+  const [showProfile, setShowProfile] = useState(false)
+
   return (
     <main className="h-screen bg-zinc-950 text-zinc-100">
+      <button
+        className="fixed right-4 top-3 z-30 rounded border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs text-zinc-200 hover:bg-zinc-800"
+        onClick={() => setShowProfile(true)}
+      >
+        我的画像
+      </button>
       <PanelGroup direction="horizontal">
         <Panel defaultSize={60} minSize={30}>
           <WindowA />
@@ -14,6 +24,7 @@ export default function App() {
           <WindowB />
         </Panel>
       </PanelGroup>
+      <ProfileDrawer open={showProfile} onClose={() => setShowProfile(false)} />
     </main>
   )
 }

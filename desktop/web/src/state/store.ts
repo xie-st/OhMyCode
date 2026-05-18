@@ -17,6 +17,30 @@ export interface Message {
   toolCalls?: ToolCall[]
 }
 
+export interface ProfileEvidence {
+  id: string
+  ts?: string
+  context?: string
+  is_gap?: boolean
+}
+
+export interface Profile {
+  cwd: string
+  skills: Record<string, { level?: number; evidence_count?: number }>
+  concepts: Record<
+    string,
+    {
+      level?: number
+      evidence_count?: number
+      last_seen?: string
+      evidence?: ProfileEvidence[]
+    }
+  >
+  knowledge_gaps: Array<{ id?: string; text?: string; ts?: string }>
+  recent_messages: string[]
+  interaction_style: Record<string, unknown>
+}
+
 interface StreamEvent {
   type: string
   data: Record<string, unknown>
@@ -28,9 +52,13 @@ interface AppState {
   messagesA: Message[]
   messagesB: Message[]
   bTrigger: string
+  profile: Profile | null
   userTyping: boolean
   setStatus(status: ConnectionStatus): void
   setUserTyping(typing: boolean): void
+  fetchProfile(): Promise<void>
+  deleteEvidence(evidenceId: string): Promise<void>
+  clearProfile(): Promise<void>
   ingestEvent(event: StreamEvent): void
   appendUserMessage(text: string): void
 }
@@ -93,11 +121,37 @@ export const useAppStore = create<AppState>((set) => ({
   messagesA: [],
   messagesB: [],
   bTrigger: '',
+  profile: null,
   userTyping: false,
 
   setStatus: (status) => set({ status }),
 
   setUserTyping: (userTyping) => set({ userTyping }),
+
+  fetchProfile: async () => {
+    const response = await fetch('/api/profile')
+    if (!response.ok) {
+      set({ profile: null })
+      return
+    }
+    set({ profile: (await response.json()) as Profile })
+  },
+
+  deleteEvidence: async (evidenceId) => {
+    const response = await fetch(`/api/profile/evidence/${evidenceId}`, {
+      method: 'DELETE',
+    })
+    if (response.ok) {
+      await useAppStore.getState().fetchProfile()
+    }
+  },
+
+  clearProfile: async () => {
+    const response = await fetch('/api/profile', { method: 'DELETE' })
+    if (response.ok) {
+      await useAppStore.getState().fetchProfile()
+    }
+  },
 
   appendUserMessage: (text) =>
     set((state) => ({

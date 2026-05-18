@@ -33,6 +33,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     session: DesktopSession | None = None
     try:
         session = DesktopSession(load_config({}), ws_send)
+        websocket.app.state.session = session
         while True:
             try:
                 payload = await websocket.receive_json()
@@ -56,5 +57,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     finally:
         if session is not None:
             await session.cancel()
+            if getattr(websocket.app.state, "session", None) is session:
+                websocket.app.state.session = None
         async with _connection_lock:
             _connected = False
