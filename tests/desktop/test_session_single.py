@@ -86,6 +86,9 @@ async def test_on_event_serializes_tool_events_and_usage(monkeypatch):
             },
         },
     ]
+    session.loop_b.release.set()
+    if session._b_turn_task is not None:
+        await session._b_turn_task
 
 
 @pytest.mark.asyncio
