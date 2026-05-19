@@ -26,6 +26,12 @@ B_COOLDOWN_SECONDS = 60.0
 B_RATE_LIMIT_WINDOW_SECONDS = 600.0
 B_RATE_LIMIT_MAX_TRIGGERS = 5
 PERMISSION_TIMEOUT_SECONDS = 30.0
+WINDOWS_HINT = (
+    "\n\nNote: You are running on Windows. The bash tool uses cmd.exe by default; "
+    "prefer Windows commands (`dir`, `type`, `findstr`, `where`) over Unix commands "
+    "(`ls`, `cat`, `grep`, `which`). If the user explicitly asks for Unix commands, "
+    "use `powershell -Command` to invoke them."
+)
 
 
 def _pick_b_model(config: OhMyCodeConfig) -> str:
@@ -55,7 +61,8 @@ class DesktopSession:
         self.bus_a = EventBus()
         self.bus_a.subscribe(self._on_event_a)
 
-        self.loop_a = ConversationLoop(config=config, confirm_fn=self._make_confirm_fn("A"))
+        config_a = self._with_windows_hint(config)
+        self.loop_a = ConversationLoop(config=config_a, confirm_fn=self._make_confirm_fn("A"))
         self.loop_a.initialize()
         self.loop_a.set_event_bus(self.bus_a)
 
@@ -72,7 +79,7 @@ class DesktopSession:
         self.bus_b = EventBus()
         self.bus_b.subscribe(self._on_event_b)
 
-        self.loop_b = ConversationLoop(config=b_config, confirm_fn=self._make_confirm_fn("B"))
+        self.loop_b = ConversationLoop(config=b_config, confirm_fn=self._b_deny_all)
         self.loop_b.initialize()
         self.loop_b.set_event_bus(self.bus_b)
 
@@ -87,10 +94,25 @@ class DesktopSession:
         self._a_last_text: str = ""
         self._background_tasks: set[asyncio.Task] = set()
 
+    def _with_windows_hint(self, config: OhMyCodeConfig) -> OhMyCodeConfig:
+        if os.name != "nt":
+            return config
+        return config.model_copy(
+            update={
+                "system_prompt_append": (
+                    (config.system_prompt_append or "") + WINDOWS_HINT
+                )
+            }
+        )
+
     async def _send(self, payload: dict[str, Any]) -> None:
         result = self._ws_send(payload)
         if isawaitable(result):
             await result
+
+    async def _b_deny_all(self, tool_name: str, params: dict) -> str:
+        """Window B is observational only and never executes tools."""
+        return "n"
 
     def _make_confirm_fn(self, window_id: str) -> Callable[[str, dict], Awaitable[str]]:
         async def confirm(tool_name: str, params: dict) -> str:

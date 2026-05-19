@@ -120,3 +120,27 @@ async def test_cancel_stops_active_turn(monkeypatch):
     await session.cancel()
 
     assert session._turn_task.cancelled()
+
+
+def test_window_a_gets_windows_shell_hint_on_windows(monkeypatch):
+    monkeypatch.setattr("desktop.server.session.os.name", "nt")
+    monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
+
+    session = DesktopSession(OhMyCodeConfig(system_prompt_append="base"), lambda _: None)
+
+    assert "base" in session.loop_a.config.system_prompt_append
+    assert "running on Windows" in session.loop_a.config.system_prompt_append
+    assert "cmd.exe" in session.loop_a.config.system_prompt_append
+    assert session.loop_b.config.system_prompt_append.count("running on Windows") == 0
+
+
+@pytest.mark.asyncio
+async def test_window_b_confirm_fn_silently_denies_tools(monkeypatch):
+    monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
+    sent = []
+    session = DesktopSession(OhMyCodeConfig(), sent.append)
+
+    answer = await session.loop_b.confirm_fn("read", {"path": "profile.json"})
+
+    assert answer == "n"
+    assert not any(item.get("type") == "permission_request" for item in sent)

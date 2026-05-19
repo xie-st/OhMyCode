@@ -1,7 +1,8 @@
+import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import { Spinner } from './Spinner'
-import type { Message } from '../state/store'
+import type { AssistantSegment, Message, ToolCall } from '../state/store'
 
 interface MessageListProps {
   messages: Message[]
@@ -59,37 +60,10 @@ function MessageBubble({ message, tone }: { message: Message; tone: 'dark' | 'am
   return (
     <article className={message.role === 'user' ? userClass : assistantClass}>
       {message.role === 'assistant' ? (
-        <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{message.text || ' '}</ReactMarkdown>
+        <AssistantContent message={message} tone={tone} />
       ) : (
         message.text
       )}
-
-      {message.toolCalls?.map((tool) => (
-        <div
-          key={tool.id}
-          className={
-            tone === 'amber'
-              ? 'mt-3 rounded border border-amber-200 bg-white p-3 text-xs text-stone-700'
-              : 'mt-3 rounded border border-zinc-800 bg-zinc-900 p-3 text-xs text-zinc-300'
-          }
-        >
-          <div
-            className={
-              tone === 'amber' ? 'font-medium text-amber-800' : 'font-medium text-cyan-300'
-            }
-          >
-            {tool.name}
-          </div>
-          <pre className={tone === 'amber' ? 'mt-2 text-stone-500' : 'mt-2 text-zinc-400'}>
-            {JSON.stringify(tool.params, null, 2)}
-          </pre>
-          {tool.result !== undefined && (
-            <pre className={tool.isError ? 'mt-2 text-red-600' : 'mt-2 text-inherit'}>
-              {tool.result}
-            </pre>
-          )}
-        </div>
-      ))}
 
       {message.error && (
         <details className="mt-2 text-xs text-rose-400">
@@ -99,4 +73,100 @@ function MessageBubble({ message, tone }: { message: Message; tone: 'dark' | 'am
       )}
     </article>
   )
+}
+
+function AssistantContent({ message, tone }: { message: Message; tone: 'dark' | 'amber' }) {
+  const segments = message.segments ?? [{ kind: 'text' as const, text: message.text }]
+
+  return (
+    <>
+      {segments.map((segment, index) => (
+        <AssistantSegmentView
+          key={`${segment.kind}-${index}`}
+          segment={segment}
+          tone={tone}
+        />
+      ))}
+    </>
+  )
+}
+
+function AssistantSegmentView({
+  segment,
+  tone,
+}: {
+  segment: AssistantSegment
+  tone: 'dark' | 'amber'
+}) {
+  if (segment.kind === 'text') {
+    return <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{segment.text || ' '}</ReactMarkdown>
+  }
+
+  return <ToolCallCard tool={segment.tool} tone={tone} />
+}
+
+function ToolCallCard({ tool, tone }: { tool: ToolCall; tone: 'dark' | 'amber' }) {
+  return (
+    <div
+      className={
+        tone === 'amber'
+          ? 'my-3 rounded border border-amber-200 bg-white p-3 text-xs text-stone-700'
+          : 'my-3 rounded border border-zinc-800 bg-zinc-900 p-3 text-xs text-zinc-300'
+      }
+    >
+      <div
+        className={
+          tone === 'amber' ? 'font-medium text-amber-800' : 'font-medium text-cyan-300'
+        }
+      >
+        {tool.name}
+      </div>
+      <pre className={tone === 'amber' ? 'mt-2 text-stone-500' : 'mt-2 text-zinc-400'}>
+        {formatParams(tool.params)}
+      </pre>
+      <ToolResult tool={tool} tone={tone} />
+    </div>
+  )
+}
+
+function ToolResult({ tool, tone }: { tool: ToolCall; tone: 'dark' | 'amber' }) {
+  const [expanded, setExpanded] = useState(false)
+  if (tool.result === undefined) {
+    return null
+  }
+
+  const lines = tool.result.split('\n')
+  const isTruncated = lines.length > 10 || tool.result.length > 500
+  const shown =
+    expanded || !isTruncated
+      ? tool.result
+      : trimChars(lines.slice(0, 10).join('\n'), 500)
+  const resultClass = tool.isError
+    ? 'mt-2 whitespace-pre-wrap text-red-600'
+    : tone === 'amber'
+      ? 'mt-2 whitespace-pre-wrap text-stone-700'
+      : 'mt-2 whitespace-pre-wrap text-zinc-300'
+
+  return (
+    <div>
+      <pre className={resultClass}>{`${tool.isError ? 'Error' : 'Result'}\n${shown}`}</pre>
+      {isTruncated && (
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className={tone === 'amber' ? 'mt-2 text-xs text-amber-700' : 'mt-2 text-xs text-cyan-300'}
+        >
+          {expanded ? 'Collapse' : `Show more (${lines.length} lines)`}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function formatParams(params: unknown) {
+  return trimChars(JSON.stringify(params, null, 2), 100)
+}
+
+function trimChars(text: string, maxChars: number) {
+  return text.length > maxChars ? `${text.slice(0, maxChars - 3)}...` : text
 }

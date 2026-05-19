@@ -1,13 +1,49 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import { PermissionDialog } from './components/PermissionDialog'
 import { ProfileDrawer } from './components/ProfileDrawer'
 import { useWebSocket } from './hooks/useWebSocket'
+import { PrototypeSwitcher } from './prototypes/PrototypeSwitcher'
+import { VariantA } from './prototypes/VariantA'
+import { VariantB } from './prototypes/VariantB'
+import { VariantC } from './prototypes/VariantC'
 import { useAppStore } from './state/store'
 import { WindowA } from './windows/WindowA'
 import { WindowB } from './windows/WindowB'
 
 export default function App() {
+  const [variant, setVariant] = useState<string | null>(() => {
+    if (typeof window === 'undefined') {
+      return null
+    }
+    return new URLSearchParams(window.location.search).get('variant')
+  })
+
+  const setVariantWithUrl = useCallback((nextVariant: string) => {
+    setVariant(nextVariant)
+    const url = new URL(window.location.href)
+    url.searchParams.set('variant', nextVariant)
+    window.history.replaceState({}, '', url)
+  }, [])
+
+  if (variant && import.meta.env.DEV) {
+    const Cmp = variant === 'A' ? VariantA : variant === 'B' ? VariantB : VariantC
+    return (
+      <>
+        <Cmp />
+        <PrototypeSwitcher
+          variants={['A', 'B', 'C']}
+          current={variant}
+          onChange={setVariantWithUrl}
+        />
+      </>
+    )
+  }
+
+  return <DesktopApp />
+}
+
+function DesktopApp() {
   const [showProfile, setShowProfile] = useState(false)
   const pendingPermission = useAppStore((state) => state.pendingPermission)
   const clearPendingPermission = useAppStore((state) => state.clearPendingPermission)

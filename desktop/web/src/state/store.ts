@@ -11,11 +11,15 @@ export interface ToolCall {
   isError?: boolean
 }
 
+export type AssistantSegment =
+  | { kind: 'text'; text: string }
+  | { kind: 'tool'; tool: ToolCall }
+
 export interface Message {
   id: string
   role: 'user' | 'assistant'
   text: string
-  toolCalls?: ToolCall[]
+  segments?: AssistantSegment[]
   error?: string
 }
 
@@ -85,47 +89,79 @@ const ensureAssistant = (messages: Message[]): Message[] => {
   if (last?.role === 'assistant') {
     return messages
   }
-  return [...messages, { id: makeId(), role: 'assistant', text: '', toolCalls: [] }]
+  return [...messages, { id: makeId(), role: 'assistant', text: '', segments: [] }]
 }
+
+const appendTextSegment = (message: Message, text: string): Message => {
+  const segments = message.segments ?? []
+  const lastSegment = segments[segments.length - 1]
+
+  if (lastSegment?.kind === 'text') {
+    return {
+      ...message,
+      text: `${message.text}${text}`,
+      segments: [
+        ...segments.slice(0, -1),
+        { kind: 'text', text: `${lastSegment.text}${text}` },
+      ],
+    }
+  }
+
+  return {
+    ...message,
+    text: `${message.text}${text}`,
+    segments: [...segments, { kind: 'text', text }],
+  }
+}
+
+const updateToolSegment = (
+  message: Message,
+  toolId: string,
+  patch: Partial<ToolCall>,
+): Message => ({
+  ...message,
+  segments: (message.segments ?? []).map((segment) =>
+    segment.kind === 'tool' && segment.tool.id === toolId
+      ? { kind: 'tool', tool: { ...segment.tool, ...patch } }
+      : segment,
+  ),
+})
 
 const ingestMessageEvent = (messages: Message[], event: StreamEvent): Message[] => {
   if (event.type === 'TextChunk') {
     const nextMessages = ensureAssistant(messages)
     const last = nextMessages[nextMessages.length - 1]
-    return [
-      ...nextMessages.slice(0, -1),
-      { ...last, text: `${last.text}${String(event.data.text ?? '')}` },
-    ]
+    return [...nextMessages.slice(0, -1), appendTextSegment(last, String(event.data.text ?? ''))]
   }
 
   if (event.type === 'ToolCallStart') {
     const nextMessages = ensureAssistant(messages)
     const last = nextMessages[nextMessages.length - 1]
-    const toolCalls = [
-      ...(last.toolCalls ?? []),
+    const segments = [
+      ...(last.segments ?? []),
       {
-        id: String(event.data.tool_use_id ?? ''),
-        name: String(event.data.tool_name ?? ''),
-        params: event.data.params ?? {},
+        kind: 'tool' as const,
+        tool: {
+          id: String(event.data.tool_use_id ?? ''),
+          name: String(event.data.tool_name ?? ''),
+          params: event.data.params ?? {},
+        },
       },
     ]
-    return [...nextMessages.slice(0, -1), { ...last, toolCalls }]
+    return [...nextMessages.slice(0, -1), { ...last, segments }]
   }
 
   if (event.type === 'ToolCallResult') {
     const nextMessages = ensureAssistant(messages)
     const last = nextMessages[nextMessages.length - 1]
     const toolId = String(event.data.tool_use_id ?? '')
-    const toolCalls = (last.toolCalls ?? []).map((call) =>
-      call.id === toolId
-        ? {
-            ...call,
-            result: String(event.data.result ?? ''),
-            isError: Boolean(event.data.is_error),
-          }
-        : call,
-    )
-    return [...nextMessages.slice(0, -1), { ...last, toolCalls }]
+    return [
+      ...nextMessages.slice(0, -1),
+      updateToolSegment(last, toolId, {
+        result: String(event.data.result ?? ''),
+        isError: Boolean(event.data.is_error),
+      }),
+    ]
   }
 
   return messages
