@@ -7,11 +7,15 @@ from desktop.server.session import _derive_title
 from desktop.server.sessions import SessionStore
 from ohmycode.config.config import OhMyCodeConfig
 from ohmycode.core.messages import (
+    AssistantMessage,
     TextChunk,
     TokenUsage,
+    ToolResultMessage,
     ToolCallResult,
     ToolCallStart,
+    ToolUseBlock,
     TurnComplete,
+    UserMessage,
 )
 
 
@@ -256,6 +260,158 @@ def test_existing_session_history_loads_into_both_loops(tmp_path, monkeypatch):
     assert [message.content for message in session.loop_b.messages] == ["old B"]
 
 
+def test_load_loop_history_preserves_tool_sequence(tmp_path, monkeypatch):
+    monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
+    store = SessionStore(root=tmp_path / "projects")
+    session_meta = store.create_new("slug-one")
+    store.save_messages(
+        "slug-one",
+        session_meta.id,
+        "A",
+        [
+            {
+                "type": "AssistantMessage",
+                "data": {
+                    "content": "Reading.",
+                    "tool_calls": [
+                        {
+                            "tool_use_id": "tool-1",
+                            "tool_name": "read",
+                            "params": {"path": "README.md"},
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "ToolResultMessage",
+                "data": {
+                    "tool_use_id": "tool-1",
+                    "content": "contents",
+                    "is_error": False,
+                },
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        "desktop.server.session.DesktopSession._project_slug",
+        lambda self: "slug-one",
+    )
+
+    session = DesktopSession(
+        OhMyCodeConfig(),
+        lambda _: None,
+        session_id=session_meta.id,
+        store=store,
+    )
+
+    [assistant, result] = session.loop_a.messages
+    assert isinstance(assistant, AssistantMessage)
+    assert assistant.tool_calls == [
+        ToolUseBlock("tool-1", "read", {"path": "README.md"})
+    ]
+    assert isinstance(result, ToolResultMessage)
+    assert result.tool_use_id == "tool-1"
+
+
+def test_legacy_session_format_migration_keeps_text_only_messages(monkeypatch):
+    monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
+    session = DesktopSession(OhMyCodeConfig(), lambda _: None)
+    loop = FakeLoop(OhMyCodeConfig())
+
+    session._load_loop_history(
+        loop,
+        [
+            {"role": "user", "text": "hello"},
+            {"role": "assistant", "text": "hi"},
+            {"role": "tool", "text": "legacy orphan"},
+            {"role": "assistant", "segments": []},
+        ],
+    )
+
+    assert [type(message) for message in loop.messages] == [
+        UserMessage,
+        AssistantMessage,
+    ]
+    assert [message.content for message in loop.messages] == ["hello", "hi"]
+
+
+@pytest.mark.asyncio
+async def test_persist_after_turn_complete_uses_kernel_messages(tmp_path, monkeypatch):
+    monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
+    monkeypatch.setattr(
+        "desktop.server.session.DesktopSession._project_slug",
+        lambda self: "slug-one",
+    )
+    store = SessionStore(root=tmp_path / "projects")
+    session_meta = store.create_new("slug-one")
+    session = DesktopSession(
+        OhMyCodeConfig(),
+        lambda _: None,
+        session_id=session_meta.id,
+        store=store,
+    )
+    monkeypatch.setattr(session, "_schedule_b_trigger", lambda reason: None)
+    session.loop_a.messages = [
+        AssistantMessage(
+            "Reading.",
+            tool_calls=[ToolUseBlock("tool-1", "read", {"path": "README.md"})],
+        ),
+        ToolResultMessage("tool-1", "contents", is_error=False),
+    ]
+
+    await session._on_event_a(TurnComplete("stop", TokenUsage(1, 2, 3)))
+
+    saved = store.load_messages("slug-one", session_meta.id, "A")
+    assert saved == [
+        {
+            "type": "AssistantMessage",
+            "data": {
+                "content": "Reading.",
+                "tool_calls": [
+                    {
+                        "tool_use_id": "tool-1",
+                        "tool_name": "read",
+                        "params": {"path": "README.md"},
+                    }
+                ],
+                "role": "assistant",
+            },
+        },
+        {
+            "type": "ToolResultMessage",
+            "data": {
+                "tool_use_id": "tool-1",
+                "content": "contents",
+                "is_error": False,
+                "role": "tool",
+            },
+        },
+    ]
+    assert session.messages_a == [
+        {
+            "id": "history-0",
+            "role": "assistant",
+            "text": "Reading.",
+            "segments": [
+                {"kind": "text", "text": "Reading."},
+                {
+                    "kind": "tool",
+                    "tool": {
+                        "id": "tool-1",
+                        "name": "read",
+                        "params": {"path": "README.md"},
+                        "paramsPreview": '{"path": "README.md"}',
+                        "result": "contents",
+                        "resultPreview": "contents",
+                        "isTruncated": False,
+                        "isError": False,
+                    },
+                },
+            ],
+        }
+    ]
+
+
 @pytest.mark.asyncio
 async def test_swap_to_replaces_history_without_recreating_loops(tmp_path, monkeypatch):
     monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
@@ -308,8 +464,23 @@ async def test_swap_to_replaces_history_without_recreating_loops(tmp_path, monke
     assert [message.content for message in session.loop_b.messages] == [
         "new B assistant"
     ]
-    assert session.messages_a == store.load_messages("slug-one", second.id, "A")
-    assert session.messages_b == store.load_messages("slug-one", second.id, "B")
+    assert session.messages_a == [
+        {"id": "history-0", "role": "user", "text": "new A user"},
+        {
+            "id": "history-1",
+            "role": "assistant",
+            "text": "new A assistant",
+            "segments": [{"kind": "text", "text": "new A assistant"}],
+        },
+    ]
+    assert session.messages_b == [
+        {
+            "id": "history-0",
+            "role": "assistant",
+            "text": "new B assistant",
+            "segments": [{"kind": "text", "text": "new B assistant"}],
+        }
+    ]
     assert session._a_last_text == ""
     assert session._b_pending_text == ""
     assert session._a_error_history == []

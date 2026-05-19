@@ -37,12 +37,27 @@ def test_list_sessions_returns_created_at_descending(tmp_path):
 def test_save_and_load_messages_by_window(tmp_path):
     store = SessionStore(root=tmp_path)
     session = store.create_new("project-one")
-    messages = [{"role": "user", "text": "hello"}]
+    messages = [
+        {
+            "type": "UserMessage",
+            "data": {"content": "hello", "role": "user"},
+        }
+    ]
 
     store.save_messages("project-one", session.id, "A", messages)
 
     assert store.load_messages("project-one", session.id, "A") == messages
     assert store.load_messages("project-one", session.id, "B") == []
+
+
+def test_save_and_load_legacy_message_dicts_by_window(tmp_path):
+    store = SessionStore(root=tmp_path)
+    session = store.create_new("project-one")
+    messages = [{"role": "user", "text": "hello"}]
+
+    store.save_messages("project-one", session.id, "A", messages)
+
+    assert store.load_messages("project-one", session.id, "A") == messages
 
 
 def test_load_session_reads_meta_for_existing_session(tmp_path):

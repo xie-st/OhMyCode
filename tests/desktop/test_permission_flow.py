@@ -11,6 +11,10 @@ class FakeLoop:
         self.config = config
         self.confirm_fn = confirm_fn
         self.bus = None
+        # R1.6 kernel-form persistence reads loop.messages to build the
+        # initial frontend view; keep an empty list so the test doesn't
+        # depend on any history.
+        self.messages: list = []
 
     def initialize(self):
         return None

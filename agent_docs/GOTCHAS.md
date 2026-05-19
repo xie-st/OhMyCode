@@ -147,3 +147,7 @@ The desktop UI may open a WebSocket before the user sends any message, and React
 ## 27. Desktop session switching is an in-place loop history swap
 
 The desktop UI switches existing sessions by sending `switch_session` over the live WebSocket. `DesktopSession.swap_to()` cancels active A/B/background turns, reloads persisted A/B messages, and repopulates the existing `ConversationLoop` instances without rebuilding providers, tools, or system prompts. The WebSocket handler should answer with `current_session` and `history_loaded` only; do not send `runtime_info` for an in-place switch.
+
+## 28. Desktop session files store kernel messages, not frontend rows
+
+`a-messages.json` and `b-messages.json` persist serialized `ohmycode.core.messages` dataclasses (`UserMessage`, `AssistantMessage`, `ToolResultMessage`, etc.). Do not overwrite them with the React `{role, text, segments}` view. The frontend history is derived from `ConversationLoop.messages` when `history_loaded` is sent, and the websocket `save_session` message is intentionally ignored server-side. This keeps assistant `tool_calls` adjacent to matching tool results after reload and avoids orphan tool-call provider errors.

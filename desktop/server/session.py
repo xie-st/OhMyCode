@@ -6,19 +6,22 @@ from inspect import isawaitable
 from pathlib import Path
 from typing import Any
 
+from desktop.server._message_serialize import deserialize_message, serialize_message
 from desktop.server._serialize import serialize_event
 from desktop.server.growth_prompt import GROWTH_AGENT_PROMPT
 from desktop.server.profile import UserProfile
-from desktop.server.render_rules import truncate_params
+from desktop.server.render_rules import truncate_params, truncate_result
 from desktop.server.sessions import Session, SessionStore, sessions_store
 from ohmycode.config.config import OhMyCodeConfig
 from ohmycode.core.events import EventBus
 from ohmycode.core.loop import ConversationLoop
 from ohmycode.core.messages import (
     AssistantMessage,
+    Message,
     StreamEvent,
     TextChunk,
     ToolCallResult,
+    ToolResultMessage,
     TurnComplete,
     UserMessage,
 )
@@ -42,6 +45,33 @@ WINDOWS_HINT = (
     "use `powershell -Command` to invoke them."
 )
 UNTITLED_SESSION_TITLES = {"New conversation", "\u65b0\u4f1a\u8bdd"}
+
+
+def _user_message_text(message: UserMessage) -> str:
+    if isinstance(message.content, str):
+        return message.content
+    return "\n".join(item for item in message.content if isinstance(item, str))
+
+
+def _attach_tool_result(rows: list[dict], message: ToolResultMessage) -> None:
+    for row in reversed(rows):
+        if row.get("role") != "assistant":
+            continue
+        segments = row.get("segments")
+        if not isinstance(segments, list):
+            continue
+        for segment in segments:
+            if not isinstance(segment, dict) or segment.get("kind") != "tool":
+                continue
+            tool = segment.get("tool")
+            if not isinstance(tool, dict) or tool.get("id") != message.tool_use_id:
+                continue
+            preview, is_truncated = truncate_result(message.content)
+            tool["result"] = message.content
+            tool["resultPreview"] = preview
+            tool["isTruncated"] = is_truncated
+            tool["isError"] = message.is_error
+            return
 
 
 def _derive_title(text: str) -> str:
@@ -85,16 +115,17 @@ class DesktopSession:
         self._ensure_inspiration_dirs()
         self._pending_perms: dict[str, asyncio.Future[str]] = {}
         self._auto_approved_tools: set[str] = set()
-        if self.session is None:
-            self.messages_a = []
-            self.messages_b = []
-        else:
-            self.messages_a = self.store.load_messages(
+        raw_messages_a: list[dict] = []
+        raw_messages_b: list[dict] = []
+        if self.session is not None:
+            raw_messages_a = self.store.load_messages(
                 self.project_slug, self.session.id, "A"
             )
-            self.messages_b = self.store.load_messages(
+            raw_messages_b = self.store.load_messages(
                 self.project_slug, self.session.id, "B"
             )
+        self.messages_a: list[dict] = []
+        self.messages_b: list[dict] = []
 
         self.bus_a = EventBus()
         self.bus_a.subscribe(self._on_event_a)
@@ -102,7 +133,8 @@ class DesktopSession:
         config_a = self._with_windows_hint(config)
         self.loop_a = ConversationLoop(config=config_a, confirm_fn=self._make_confirm_fn("A"))
         self.loop_a.initialize()
-        self._load_loop_history(self.loop_a, self.messages_a)
+        self._load_loop_history(self.loop_a, raw_messages_a)
+        self.messages_a = self._messages_to_frontend_view(self.loop_a.messages)
         self.loop_a.set_event_bus(self.bus_a)
 
         sessions_root = str(
@@ -134,7 +166,8 @@ class DesktopSession:
 
         self.loop_b = ConversationLoop(config=b_config, confirm_fn=self._make_confirm_fn("B"))
         self.loop_b.initialize()
-        self._load_loop_history(self.loop_b, self.messages_b)
+        self._load_loop_history(self.loop_b, raw_messages_b)
+        self.messages_b = self._messages_to_frontend_view(self.loop_b.messages)
         self.loop_b.set_event_bus(self.bus_b)
 
         self._turn_task: asyncio.Task | None = None
@@ -183,15 +216,66 @@ class DesktopSession:
         }
 
     def _load_loop_history(self, loop: ConversationLoop, messages: list[dict]) -> None:
+        warned_legacy = False
         for item in messages:
+            if not isinstance(item, dict):
+                continue
+            try:
+                loop.messages.append(deserialize_message(item))
+                continue
+            except (KeyError, TypeError):
+                pass
+
             role = item.get("role")
             text = item.get("text")
             if not isinstance(text, str):
                 continue
+            if not warned_legacy:
+                print("Migrating legacy session format (tool sequences will be lost)")
+                warned_legacy = True
             if role == "user":
                 loop.messages.append(UserMessage(text))
             elif role == "assistant":
                 loop.messages.append(AssistantMessage(text))
+
+    def _messages_to_frontend_view(self, messages: list[Message]) -> list[dict]:
+        rows: list[dict] = []
+        for index, message in enumerate(messages):
+            if isinstance(message, UserMessage):
+                rows.append(
+                    {
+                        "id": f"history-{index}",
+                        "role": "user",
+                        "text": _user_message_text(message),
+                    }
+                )
+            elif isinstance(message, AssistantMessage):
+                segments = []
+                if message.content:
+                    segments.append({"kind": "text", "text": message.content})
+                for tool_call in message.tool_calls:
+                    segments.append(
+                        {
+                            "kind": "tool",
+                            "tool": {
+                                "id": tool_call.tool_use_id,
+                                "name": tool_call.tool_name,
+                                "params": tool_call.params,
+                                "paramsPreview": truncate_params(tool_call.params),
+                            },
+                        }
+                    )
+                rows.append(
+                    {
+                        "id": f"history-{index}",
+                        "role": "assistant",
+                        "text": message.content,
+                        "segments": segments,
+                    }
+                )
+            elif isinstance(message, ToolResultMessage):
+                _attach_tool_result(rows, message)
+        return rows
 
     def _ensure_inspiration_dirs(self) -> None:
         project_root = Path.home() / ".ohmycode" / "projects" / self.project_slug
@@ -255,6 +339,7 @@ class DesktopSession:
             self._a_last_text = f"{self._a_last_text}{event.text}"[-4000:]
         elif isinstance(event, TurnComplete):
             self._schedule_b_trigger("turn_complete")
+            self._persist_window("A")
 
     async def _on_event_b(self, event: StreamEvent) -> None:
         if isinstance(event, TextChunk):
@@ -279,11 +364,13 @@ class DesktopSession:
                     }
                 )
                 self._b_pending_text = ""
+                self._persist_window("B")
                 return
             if self._b_pending_text:
                 await self._send_with_window(TextChunk(self._b_pending_text), "B")
                 self._b_pending_text = ""
             await self._send_with_window(event, "B")
+            self._persist_window("B")
             return
         if self._b_pending_text and self._b_silent_pending():
             return
@@ -310,14 +397,22 @@ class DesktopSession:
         self._b_muted = muted
 
     def save_messages(self, target: str, messages: list[dict]) -> None:
+        print(
+            "[save_session] ignored frontend view; "
+            "kernel history is persisted on TurnComplete"
+        )
+
+    def _persist_window(self, window: str) -> None:
         if self.session is None:
             return
-        window = "B" if target == "B" else "A"
-        self.store.save_messages(self.project_slug, self.session.id, window, messages)
+        loop = self.loop_b if window == "B" else self.loop_a
+        serialized = [serialize_message(message) for message in loop.messages]
+        self.store.save_messages(self.project_slug, self.session.id, window, serialized)
+        view = self._messages_to_frontend_view(loop.messages)
         if window == "A":
-            self.messages_a = messages
+            self.messages_a = view
         else:
-            self.messages_b = messages
+            self.messages_b = view
 
     async def _ensure_committed(self, title_source: str) -> None:
         title = _derive_title(title_source)
@@ -428,20 +523,24 @@ class DesktopSession:
         """Switch persisted session history without rebuilding provider loops."""
         await self.cancel()
         self.session = self.store.load_session(self.project_slug, session_id)
+        raw_messages_a: list[dict] = []
+        raw_messages_b: list[dict] = []
         if self.session is None:
             self.messages_a = []
             self.messages_b = []
         else:
-            self.messages_a = self.store.load_messages(
+            raw_messages_a = self.store.load_messages(
                 self.project_slug, session_id, "A"
             )
-            self.messages_b = self.store.load_messages(
+            raw_messages_b = self.store.load_messages(
                 self.project_slug, session_id, "B"
             )
         self.loop_a.messages = []
-        self._load_loop_history(self.loop_a, self.messages_a)
+        self._load_loop_history(self.loop_a, raw_messages_a)
         self.loop_b.messages = []
-        self._load_loop_history(self.loop_b, self.messages_b)
+        self._load_loop_history(self.loop_b, raw_messages_b)
+        self.messages_a = self._messages_to_frontend_view(self.loop_a.messages)
+        self.messages_b = self._messages_to_frontend_view(self.loop_b.messages)
         self._reset_swap_state()
 
     def _reset_swap_state(self) -> None:

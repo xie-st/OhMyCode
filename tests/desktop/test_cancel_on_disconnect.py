@@ -39,6 +39,8 @@ class FakeLoop:
     def __init__(self, config, confirm_fn=None):
         self.config = config
         self.confirm_fn = confirm_fn
+        # R1.6 kernel-form persistence reads loop.messages on construction.
+        self.messages: list = []
 
     def initialize(self):
         return None
