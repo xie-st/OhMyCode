@@ -284,13 +284,28 @@ export const useAppStore = create<AppState>((set) => ({
   },
 
   createSession: async () => {
-    const response = await fetch('/api/sessions', { method: 'POST' })
+    // POST first so the sidebar updates with a real id; we then refetch so
+    // the optimistic prepend can't drift away from the server's canonical
+    // ordering (this matters when fetchSessions has just run from a
+    // TurnComplete hook in parallel).
+    let response: Response
+    try {
+      response = await fetch('/api/sessions', { method: 'POST' })
+    } catch (err) {
+      console.warn('[createSession] network error', err)
+      return
+    }
     if (!response.ok) {
+      console.warn('[createSession] POST failed', response.status)
       return
     }
     const session = (await response.json()) as Session
-    set((state) => ({ sessions: [session, ...state.sessions] }))
+    set((state) => ({
+      // De-dup in case fetchSessions already grabbed it.
+      sessions: [session, ...state.sessions.filter((s) => s.id !== session.id)],
+    }))
     sessionSwitcher?.(session.id)
+    void useAppStore.getState().fetchSessions()
   },
 
   deleteSession: async (sessionId) => {

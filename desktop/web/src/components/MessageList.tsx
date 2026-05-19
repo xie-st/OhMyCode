@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import type { AssistantSegment, Message, ToolCall } from '../state/store'
 import { Spinner } from './Spinner'
@@ -83,7 +84,9 @@ function AssistantSegmentView({
   if (segment.kind === 'text') {
     return (
       <div className="prose max-w-none text-[15px] leading-7 text-stone-900">
-        <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{segment.text || ' '}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+          {segment.text || ' '}
+        </ReactMarkdown>
       </div>
     )
   }
