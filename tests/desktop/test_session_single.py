@@ -246,6 +246,67 @@ def test_existing_session_history_loads_into_both_loops(tmp_path, monkeypatch):
     assert [message.content for message in session.loop_b.messages] == ["old B"]
 
 
+@pytest.mark.asyncio
+async def test_swap_to_replaces_history_without_recreating_loops(tmp_path, monkeypatch):
+    monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
+    monkeypatch.setattr(
+        "desktop.server.session.DesktopSession._project_slug",
+        lambda self: "slug-one",
+    )
+    store = SessionStore(root=tmp_path / "projects")
+    first = store.create_new("slug-one", title="First")
+    second = store.create_new("slug-one", title="Second")
+    store.save_messages(
+        "slug-one",
+        second.id,
+        "A",
+        [
+            {"role": "user", "text": "new A user"},
+            {"role": "assistant", "text": "new A assistant"},
+        ],
+    )
+    store.save_messages(
+        "slug-one",
+        second.id,
+        "B",
+        [{"role": "assistant", "text": "new B assistant"}],
+    )
+    session = DesktopSession(
+        OhMyCodeConfig(),
+        lambda _: None,
+        session_id=first.id,
+        store=store,
+    )
+    loop_a = session.loop_a
+    loop_b = session.loop_b
+    session._a_last_text = "old text"
+    session._a_error_history = ["old error"]
+    session._pending_tool_triggers = {"tool-1"}
+    session._b_last_trigger_at = 123.0
+    session._b_trigger_times = [100.0]
+
+    await session.swap_to(second.id)
+
+    assert session.loop_a is loop_a
+    assert session.loop_b is loop_b
+    assert session.session is not None
+    assert session.session.id == second.id
+    assert [message.content for message in session.loop_a.messages] == [
+        "new A user",
+        "new A assistant",
+    ]
+    assert [message.content for message in session.loop_b.messages] == [
+        "new B assistant"
+    ]
+    assert session.messages_a == store.load_messages("slug-one", second.id, "A")
+    assert session.messages_b == store.load_messages("slug-one", second.id, "B")
+    assert session._a_last_text == ""
+    assert session._a_error_history == []
+    assert session._pending_tool_triggers == set()
+    assert session._b_last_trigger_at == 0.0
+    assert session._b_trigger_times == []
+
+
 def test_save_messages_ignores_uncommitted_session(tmp_path, monkeypatch):
     monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
     monkeypatch.setattr(

@@ -95,6 +95,26 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 session.resolve_permission(request_id, answer)
             elif message_type == "cancel":
                 await session.cancel()
+            elif message_type == "switch_session":
+                data = payload.get("data", {})
+                new_session_id = data.get("session_id")
+                if not isinstance(new_session_id, str) or not new_session_id:
+                    continue
+                await session.swap_to(new_session_id)
+                current_session = session.current_session_payload()
+                if current_session is not None:
+                    await ws_send(
+                        {"type": "current_session", "data": current_session}
+                    )
+                    await ws_send(
+                        {
+                            "type": "history_loaded",
+                            "data": {
+                                "messagesA": session.messages_a,
+                                "messagesB": session.messages_b,
+                            },
+                        }
+                    )
             elif message_type == "save_session":
                 data = payload.get("data", {})
                 target = "B" if data.get("target") == "B" else "A"

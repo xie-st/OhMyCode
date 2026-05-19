@@ -57,6 +57,12 @@ class FakeSession:
         else:
             self.messages_a = messages
 
+    async def swap_to(self, session_id):
+        self.session.id = session_id
+        self.session.title = f"Session {session_id}"
+        self.messages_a = [{"role": "user", "text": f"A {session_id}"}]
+        self.messages_b = [{"role": "assistant", "text": f"B {session_id}"}]
+
 
 def test_ws_routes_user_input(monkeypatch):
     FakeSession.inputs = []
@@ -103,6 +109,30 @@ def test_ws_saves_session_messages(monkeypatch):
         )
 
     assert FakeSession.saved == [("A", [{"role": "user", "text": "persist me"}])]
+
+
+def test_ws_switch_session_swaps_in_place_without_runtime_info(monkeypatch):
+    monkeypatch.setattr(ws_module, "DesktopSession", FakeSession)
+
+    with TestClient(app).websocket_connect("/ws") as websocket:
+        _consume_runtime_info(websocket)
+
+        websocket.send_json(
+            {"type": "switch_session", "data": {"session_id": "session-3"}}
+        )
+
+        current = websocket.receive_json()
+        history = websocket.receive_json()
+
+        assert current["type"] == "current_session"
+        assert current["data"]["id"] == "session-3"
+        assert history == {
+            "type": "history_loaded",
+            "data": {
+                "messagesA": [{"role": "user", "text": "A session-3"}],
+                "messagesB": [{"role": "assistant", "text": "B session-3"}],
+            },
+        }
 
 
 def _consume_runtime_info(websocket):

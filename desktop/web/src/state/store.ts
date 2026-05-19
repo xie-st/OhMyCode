@@ -85,6 +85,8 @@ interface AppState {
   messagesB: Message[]
   sessions: Session[]
   currentSessionId: string | null
+  isSwitchingSession: boolean
+  switchingSessionId: string | null
   inputTarget: 'A' | 'B'
   runtime: RuntimeInfo | null
   isATurnActive: boolean
@@ -100,6 +102,7 @@ interface AppState {
   setBTurnActive(active: boolean): void
   setUserTyping(typing: boolean): void
   clearPendingPermission(): void
+  setSwitchingSession(sessionId: string | null): void
   setSessionSwitcher(switcher: ((sessionId: string) => void) | null): void
   fetchSessions(): Promise<void>
   switchSession(sessionId: string): void
@@ -232,6 +235,8 @@ export const useAppStore = create<AppState>((set) => ({
   messagesB: [],
   sessions: [],
   currentSessionId: null,
+  isSwitchingSession: false,
+  switchingSessionId: null,
   inputTarget: 'A',
   runtime: null,
   isATurnActive: false,
@@ -253,6 +258,12 @@ export const useAppStore = create<AppState>((set) => ({
   setUserTyping: (userTyping) => set({ userTyping }),
 
   clearPendingPermission: () => set({ pendingPermission: null }),
+
+  setSwitchingSession: (sessionId) =>
+    set({
+      isSwitchingSession: sessionId !== null,
+      switchingSessionId: sessionId,
+    }),
 
   setSessionSwitcher: (switcher) => {
     sessionSwitcher = switcher
@@ -359,6 +370,8 @@ export const useAppStore = create<AppState>((set) => ({
         return {
           messagesA: (event.data.messagesA ?? []) as unknown as Message[],
           messagesB: (event.data.messagesB ?? []) as unknown as Message[],
+          isSwitchingSession: false,
+          switchingSessionId: null,
           isATurnActive: false,
           isBTurnActive: false,
           bTrigger: '',

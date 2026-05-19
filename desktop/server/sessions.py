@@ -56,6 +56,9 @@ class SessionStore:
                 sessions.append(session)
         return sorted(sessions, key=lambda item: item.updated_at, reverse=True)
 
+    def load_session(self, slug: str, session_id: str) -> Session | None:
+        return self._read_meta(self._session_dir(slug, session_id) / "meta.json")
+
     def load_messages(self, slug: str, session_id: str, window: WindowId) -> list[dict]:
         path = self._messages_path(slug, session_id, window)
         if not path.exists():

@@ -40,6 +40,21 @@ def test_save_and_load_messages_by_window(tmp_path):
     assert store.load_messages("project-one", session.id, "B") == []
 
 
+def test_load_session_reads_meta_for_existing_session(tmp_path):
+    store = SessionStore(root=tmp_path)
+    created = store.create_new("project-one", title="Existing chat")
+
+    loaded = store.load_session("project-one", created.id)
+
+    assert loaded == created
+
+
+def test_load_session_returns_none_for_missing_session(tmp_path):
+    store = SessionStore(root=tmp_path)
+
+    assert store.load_session("project-one", "missing-session") is None
+
+
 def test_create_new_defaults_to_untitled_label(tmp_path):
     store = SessionStore(root=tmp_path)
 

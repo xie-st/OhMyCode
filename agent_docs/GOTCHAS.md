@@ -143,3 +143,7 @@ CJK topic titles are currently heuristic and can look awkward because they are d
 The desktop UI may open a WebSocket before the user sends any message, and React development remounts can briefly open and close sockets. `DesktopSession(session_id=None)` must remain uncommitted: no session directory, no message files, and no `current_session` event until the first real user input. Commit by calling `SessionStore.create_new()` from `handle_user_input()`, derive the title from that first message, then push `current_session`.
 
 `save_messages()` must no-op while uncommitted; persistence starts only after the first user message creates the session. Existing sessions loaded by id still push `current_session` and `history_loaded` during WebSocket startup.
+
+## 27. Desktop session switching is an in-place loop history swap
+
+The desktop UI switches existing sessions by sending `switch_session` over the live WebSocket. `DesktopSession.swap_to()` cancels active A/B/background turns, reloads persisted A/B messages, and repopulates the existing `ConversationLoop` instances without rebuilding providers, tools, or system prompts. The WebSocket handler should answer with `current_session` and `history_loaded` only; do not send `runtime_info` for an in-place switch.

@@ -391,6 +391,35 @@ class DesktopSession:
         for task in list(self._background_tasks):
             await self._cancel_task(task)
 
+    async def swap_to(self, session_id: str) -> None:
+        """Switch persisted session history without rebuilding provider loops."""
+        await self.cancel()
+        self.session = self.store.load_session(self.project_slug, session_id)
+        if self.session is None:
+            self.messages_a = []
+            self.messages_b = []
+        else:
+            self.messages_a = self.store.load_messages(
+                self.project_slug, session_id, "A"
+            )
+            self.messages_b = self.store.load_messages(
+                self.project_slug, session_id, "B"
+            )
+        self.loop_a.messages = []
+        self._load_loop_history(self.loop_a, self.messages_a)
+        self.loop_b.messages = []
+        self._load_loop_history(self.loop_b, self.messages_b)
+        self._reset_swap_state()
+
+    def _reset_swap_state(self) -> None:
+        self._turn_task = None
+        self._b_turn_task = None
+        self._a_last_text = ""
+        self._a_error_history = []
+        self._pending_tool_triggers = set()
+        self._b_last_trigger_at = 0.0
+        self._b_trigger_times = []
+
     async def _cancel_task(self, task: asyncio.Task | None) -> None:
         if not task or task.done():
             return

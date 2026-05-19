@@ -15,6 +15,7 @@ export function useWebSocket() {
   const appendUserMessage = useAppStore((state) => state.appendUserMessage)
   const setStatus = useAppStore((state) => state.setStatus)
   const setUserTypingState = useAppStore((state) => state.setUserTyping)
+  const setSwitchingSession = useAppStore((state) => state.setSwitchingSession)
   const setSessionSwitcher = useAppStore((state) => state.setSessionSwitcher)
 
   const connect = useCallback(() => {
@@ -81,17 +82,21 @@ export function useWebSocket() {
   const switchSession = useCallback(
     (sessionId: string) => {
       const socket = socketRef.current
+      setSwitchingSession(sessionId)
       if (socket?.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'cancel' }))
+        socket.send(
+          JSON.stringify({
+            type: 'switch_session',
+            data: { session_id: sessionId },
+          }),
+        )
+        return
       }
       pendingSessionRef.current = sessionId
       autoRetryTriedRef.current = true
-      if (socket) {
-        socket.close()
-      }
       connect()
     },
-    [connect],
+    [connect, setSwitchingSession],
   )
 
   useEffect(() => {

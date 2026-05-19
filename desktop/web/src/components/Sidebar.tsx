@@ -7,6 +7,8 @@ export function Sidebar() {
   const bTrigger = useAppStore((state) => state.bTrigger)
   const sessions = useAppStore((state) => state.sessions)
   const currentSessionId = useAppStore((state) => state.currentSessionId)
+  const isSwitchingSession = useAppStore((state) => state.isSwitchingSession)
+  const switchingSessionId = useAppStore((state) => state.switchingSessionId)
   const fetchSessions = useAppStore((state) => state.fetchSessions)
   const createSession = useAppStore((state) => state.createSession)
   const switchSession = useAppStore((state) => state.switchSession)
@@ -56,6 +58,7 @@ export function Sidebar() {
             <div className="mt-2 space-y-1 text-xs">
               {sessions.map((session) => {
                 const active = session.id === currentSessionId
+                const switching = isSwitchingSession && session.id === switchingSessionId
                 return (
                   <button
                     key={session.id}
@@ -65,7 +68,12 @@ export function Sidebar() {
                       active ? 'bg-emerald-50 text-emerald-700' : 'text-stone-500',
                     ].join(' ')}
                   >
-                    <span className="block truncate font-medium">{session.title}</span>
+                    <span className="flex items-center gap-2">
+                      {switching && (
+                        <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+                      )}
+                      <span className="truncate font-medium">{session.title}</span>
+                    </span>
                     <span className="block text-[11px] text-stone-400">
                       {formatRelativeTime(session.updated_at)}
                     </span>
