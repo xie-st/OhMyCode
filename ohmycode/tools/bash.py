@@ -59,7 +59,13 @@ class BashTool(Tool):
             return ToolResult(output=output, is_error=is_error)
 
         except Exception as exc:
-            return ToolResult(output=f"Error executing command: {exc}", is_error=True)
+            import traceback as _tb
+            detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            full = _tb.format_exc()
+            return ToolResult(
+                output=f"Error executing command: {detail}\n{full}",
+                is_error=True,
+            )
 
 
 def _decode_output(data: bytes) -> str:

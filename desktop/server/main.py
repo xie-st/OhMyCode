@@ -25,3 +25,8 @@ app.include_router(ws_router)
 @app.on_event("startup")
 async def startup_banner() -> None:
     print("OhMyCode Desktop server starting on ws://localhost:8765/ws")
+    loop = asyncio.get_running_loop()
+    policy = asyncio.get_event_loop_policy()
+    print(
+        f"[asyncio] policy={type(policy).__name__} loop={type(loop).__name__}"
+    )

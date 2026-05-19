@@ -40,7 +40,7 @@ class EditTool(Tool):
         new_string: str = params["new_string"]
 
         try:
-            content = file_path.read_text(errors="replace")
+            content = file_path.read_text(encoding="utf-8", errors="replace")
         except (FileNotFoundError, PermissionError, IsADirectoryError) as exc:
             return ToolResult(output=format_file_error(file_path, exc), is_error=True)
         except Exception as exc:
@@ -63,7 +63,7 @@ class EditTool(Tool):
 
         new_content = content.replace(old_string, new_string, 1)
         try:
-            file_path.write_text(new_content)
+            file_path.write_text(new_content, encoding="utf-8")
         except Exception as exc:
             return ToolResult(output=f"Error writing file: {exc}", is_error=True)
 
