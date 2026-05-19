@@ -78,6 +78,7 @@ interface AppState {
   inputTarget: 'A' | 'B'
   runtime: RuntimeInfo | null
   isATurnActive: boolean
+  isBTurnActive: boolean
   bTrigger: string
   bTriggerClearAt: number | null
   profile: Profile | null
@@ -86,6 +87,7 @@ interface AppState {
   setStatus(status: ConnectionStatus): void
   setInputTarget(target: 'A' | 'B'): void
   setATurnActive(active: boolean): void
+  setBTurnActive(active: boolean): void
   setUserTyping(typing: boolean): void
   clearPendingPermission(): void
   fetchProfile(): Promise<void>
@@ -215,6 +217,7 @@ export const useAppStore = create<AppState>((set) => ({
   inputTarget: 'A',
   runtime: null,
   isATurnActive: false,
+  isBTurnActive: false,
   bTrigger: '',
   bTriggerClearAt: null,
   profile: null,
@@ -226,6 +229,8 @@ export const useAppStore = create<AppState>((set) => ({
   setInputTarget: (inputTarget) => set({ inputTarget }),
 
   setATurnActive: (isATurnActive) => set({ isATurnActive }),
+
+  setBTurnActive: (isBTurnActive) => set({ isBTurnActive }),
 
   setUserTyping: (userTyping) => set({ userTyping }),
 
@@ -267,6 +272,7 @@ export const useAppStore = create<AppState>((set) => ({
           ? [...state.messagesB, { id: makeId(), role: 'user', text }]
           : state.messagesB,
       isATurnActive: target === 'A' ? true : state.isATurnActive,
+      isBTurnActive: target === 'B' ? true : state.isBTurnActive,
     })),
 
   ingestEvent: (event) =>
@@ -298,6 +304,7 @@ export const useAppStore = create<AppState>((set) => ({
             ],
             bTrigger: '',
             bTriggerClearAt: null,
+            isBTurnActive: false,
           }
         }
 
@@ -321,10 +328,11 @@ export const useAppStore = create<AppState>((set) => ({
 
       if (eventWindow === 'B') {
         if (event.type === 'TurnComplete') {
-          return { bTriggerClearAt: scheduleBTriggerClear() }
+          return { bTriggerClearAt: scheduleBTriggerClear(), isBTurnActive: false }
         }
         return {
           messagesB: ingestMessageEvent(state.messagesB, event),
+          isBTurnActive: true,
           bTrigger: event.type === 'TextChunk' ? 'Explaining' : state.bTrigger,
           bTriggerClearAt: null,
         }

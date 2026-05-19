@@ -23,7 +23,12 @@ export function MessageList({
         {messages.map((message) => (
           <MessageBubble key={message.id} message={message} tone={tone} />
         ))}
-        {showSpinner && <Spinner label={spinnerLabel} className="text-emerald-600" />}
+        {showSpinner && (
+          <Spinner
+            label={spinnerLabel}
+            className={tone === 'pink' ? 'text-pink-600' : 'text-emerald-600'}
+          />
+        )}
       </div>
     </div>
   )
@@ -130,10 +135,11 @@ function ToolResult({ tool, tone }: { tool: ToolCall; tone: 'emerald' | 'pink' }
 
 function toolBorderClass(tool: ToolCall, tone: 'emerald' | 'pink') {
   if (tool.isError) return 'border-l-pink-500'
+  if (tone === 'pink') return 'border-l-pink-500'
   if (tool.name === 'read') return 'border-l-sky-500'
   if (tool.name === 'bash') return 'border-l-emerald-500'
   if (tool.name === 'write' || tool.name === 'edit') return 'border-l-emerald-500'
-  return tone === 'pink' ? 'border-l-pink-500' : 'border-l-emerald-500'
+  return 'border-l-emerald-500'
 }
 
 function formatParams(tool: ToolCall) {

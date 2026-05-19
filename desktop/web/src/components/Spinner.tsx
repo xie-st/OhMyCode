@@ -7,7 +7,7 @@ interface SpinnerProps {
   className?: string
 }
 
-export function Spinner({ label = 'Thinking', className = '' }: SpinnerProps) {
+export function Spinner({ label = 'Thinking', className = 'text-emerald-600' }: SpinnerProps) {
   const [i, setI] = useState(0)
 
   useEffect(() => {
@@ -16,7 +16,7 @@ export function Spinner({ label = 'Thinking', className = '' }: SpinnerProps) {
   }, [])
 
   return (
-    <span className={`font-mono text-sm text-emerald-600 ${className}`}>
+    <span className={`font-mono text-sm ${className}`}>
       {FRAMES[i]} {label}...
     </span>
   )

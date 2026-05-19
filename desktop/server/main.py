@@ -1,9 +1,15 @@
+import asyncio
+import sys
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from desktop.server.profile_api import router as profile_router
 from desktop.server.ws import router as ws_router
 
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 app = FastAPI(title="OhMyCode Desktop")
 app.add_middleware(

@@ -5,6 +5,7 @@ import { useAppStore } from '../state/store'
 export function WindowB() {
   const messagesB = useAppStore((state) => state.messagesB)
   const bTrigger = useAppStore((state) => state.bTrigger)
+  const isBTurnActive = useAppStore((state) => state.isBTurnActive)
 
   return (
     <section className="flex h-full flex-col bg-white text-stone-900">
@@ -13,10 +14,15 @@ export function WindowB() {
           B active: {bTrigger}
         </div>
       )}
-      {messagesB.length === 0 ? (
+      {messagesB.length === 0 && !isBTurnActive ? (
         <EmptyState title="Window B" accent="pink" />
       ) : (
-        <MessageList messages={messagesB} tone="pink" />
+        <MessageList
+          messages={messagesB}
+          tone="pink"
+          showSpinner={isBTurnActive}
+          spinnerLabel="Thinking"
+        />
       )}
     </section>
   )
