@@ -53,10 +53,10 @@ async def test_on_event_serializes_text_chunk(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_on_event_serializes_tool_events_and_usage(monkeypatch):
-    monkeypatch.setattr("desktop.server.session.B_TOOL_TRIGGER_DELAY_SECONDS", 0.0)
     monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
     sent = []
     session = DesktopSession(OhMyCodeConfig(), sent.append)
+    monkeypatch.setattr(session, "_schedule_b_trigger", lambda reason: None)
 
     await session._on_event_a(ToolCallStart("read", "tool-1", {"path": "x.py"}))
     await session._on_event_a(ToolCallResult("tool-1", "ok", False))
@@ -118,7 +118,15 @@ async def test_user_input_starts_one_turn(monkeypatch):
     assert session.loop_a.stream_started == 1
     assert sent[0]["type"] == "current_session"
     assert sent[0]["data"]["title"] == "first"
-    assert sent[1:] == [{"type": "TextChunk", "data": {"text": "hi"}}]
+    # R1.5: user_input also fires Window B immediately. Verify A's TextChunk
+    # is present without asserting B is silent (B can produce its own events
+    # in the same window). A-side TextChunk has no `window` key per
+    # serializer convention.
+    a_text_events = [
+        item for item in sent[1:]
+        if item.get("type") == "TextChunk" and "window" not in item
+    ]
+    assert a_text_events == [{"type": "TextChunk", "data": {"text": "hi"}}]
 
 
 @pytest.mark.asyncio
@@ -132,6 +140,7 @@ async def test_new_desktop_session_is_uncommitted_until_user_input(tmp_path, mon
     sent = []
 
     session = DesktopSession(OhMyCodeConfig(), sent.append, store=store)
+    monkeypatch.setattr(session, "_schedule_b_trigger", lambda reason: None)
 
     assert session.session is None
     assert session.messages_a == []
@@ -191,6 +200,7 @@ def test_derive_title_collapses_whitespace_and_truncates():
 async def test_cancel_stops_active_turn(monkeypatch):
     monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
     session = DesktopSession(OhMyCodeConfig(), lambda _: asyncio.sleep(0))
+    monkeypatch.setattr(session, "_schedule_b_trigger", lambda reason: None)
 
     await session.handle_user_input("hello")
     await asyncio.sleep(0)
@@ -281,7 +291,7 @@ async def test_swap_to_replaces_history_without_recreating_loops(tmp_path, monke
     loop_b = session.loop_b
     session._a_last_text = "old text"
     session._a_error_history = ["old error"]
-    session._pending_tool_triggers = {"tool-1"}
+    session._b_pending_text = "[sil"
     session._b_last_trigger_at = 123.0
     session._b_trigger_times = [100.0]
 
@@ -301,8 +311,8 @@ async def test_swap_to_replaces_history_without_recreating_loops(tmp_path, monke
     assert session.messages_a == store.load_messages("slug-one", second.id, "A")
     assert session.messages_b == store.load_messages("slug-one", second.id, "B")
     assert session._a_last_text == ""
+    assert session._b_pending_text == ""
     assert session._a_error_history == []
-    assert session._pending_tool_triggers == set()
     assert session._b_last_trigger_at == 0.0
     assert session._b_trigger_times == []
 

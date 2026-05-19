@@ -72,11 +72,14 @@ PROFILE_FIELDS = {
     "cwd",
     "skills",
     "concepts",
+    "concept_dispositions",
     "interests",
     "knowledge_gaps",
     "recent_messages",
     "interaction_style",
 }
+
+INSPIRATIONS_MAX_BYTES = 16 * 1024
 
 
 @dataclass
@@ -84,6 +87,7 @@ class UserProfile:
     cwd: str
     skills: dict[str, dict[str, Any]] = field(default_factory=dict)
     concepts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    concept_dispositions: dict[str, str] = field(default_factory=dict)
     interests: list[str] = field(default_factory=list)
     knowledge_gaps: list[dict[str, str]] = field(default_factory=list)
     recent_messages: list[str] = field(default_factory=list)
@@ -135,11 +139,44 @@ class UserProfile:
         concepts = self._active_concepts_snapshot(current_text)
         avg_len = self.interaction_style.get("avg_msg_len", 0)
         style = "concise" if avg_len < 80 else "detailed"
-        return (
+        parts = [
             "User profile snapshot: "
-            f"skills={skills}; knowledge_gaps={gaps}; interaction_style={style}; "
-            f"active_concepts={concepts}"
-        )
+            f"skills={skills}",
+            f"knowledge_gaps={gaps}",
+            f"interaction_style={style}",
+            f"active_concepts={concepts}",
+        ]
+        if self.concept_dispositions:
+            dispositions = ", ".join(
+                f"{key}={value}"
+                for key, value in sorted(self.concept_dispositions.items())
+            )
+            parts.append(f"dispositions: {dispositions}")
+        return "; ".join(parts)
+
+    def load_inspirations(self) -> str:
+        """Load project and global inspiration markdown with a small cap."""
+        roots = [
+            _project_root(self.cwd) / "inspirations",
+            Path.home() / ".ohmycode" / "inspirations",
+        ]
+        chunks: list[str] = []
+        remaining = INSPIRATIONS_MAX_BYTES
+        for root in roots:
+            if remaining <= 0 or not root.exists():
+                continue
+            for path in sorted(root.glob("*.md")):
+                if remaining <= 0:
+                    break
+                try:
+                    data = path.read_bytes()[:remaining]
+                except OSError:
+                    continue
+                text = data.decode("utf-8", errors="replace").strip()
+                if text:
+                    chunks.append(f"### {path.name}\n{text}")
+                    remaining -= len(data)
+        return "\n\n".join(chunks)
 
     def delete_evidence(self, evidence_id: str) -> bool:
         deleted = False
@@ -165,6 +202,7 @@ class UserProfile:
         with self._lock:
             self.skills = {}
             self.concepts = {}
+            self.concept_dispositions = {}
             self.interests = []
             self.knowledge_gaps = []
             self.recent_messages = []
@@ -230,6 +268,7 @@ class UserProfile:
             "cwd": self.cwd,
             "skills": self.skills,
             "concepts": self.concepts,
+            "concept_dispositions": self.concept_dispositions,
             "interests": self.interests,
             "knowledge_gaps": self.knowledge_gaps,
             "recent_messages": self.recent_messages,
@@ -323,6 +362,10 @@ def _format_gaps(gaps: list[dict[str, str]]) -> str:
 
 
 def _profile_path(cwd: str) -> Path:
+    return _project_root(cwd) / "profile" / "profile.json"
+
+
+def _project_root(cwd: str) -> Path:
     root = _canonical_project_root(_find_git_root(cwd) or os.path.abspath(cwd))
     slug = _sanitize_slug(root)
-    return Path.home() / ".ohmycode" / "projects" / slug / "profile" / "profile.json"
+    return Path.home() / ".ohmycode" / "projects" / slug

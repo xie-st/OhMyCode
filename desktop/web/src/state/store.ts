@@ -53,6 +53,7 @@ export interface Profile {
       evidence?: ProfileEvidence[]
     }
   >
+  concept_dispositions: Record<string, string>
   knowledge_gaps: Array<{ id?: string; text?: string; ts?: string }>
   recent_messages: string[]
   interaction_style: Record<string, unknown>
@@ -413,6 +414,10 @@ export const useAppStore = create<AppState>((set) => ({
             window: event.data.window === 'B' ? 'B' : 'A',
           },
         }
+      }
+
+      if (event.type === 'b_silent') {
+        return { isBTurnActive: false }
       }
 
       if (eventWindow === 'B') {

@@ -4,7 +4,7 @@ import pytest
 
 from desktop.server.session import DesktopSession
 from ohmycode.config.config import OhMyCodeConfig
-from ohmycode.core.messages import ToolCallResult, ToolCallStart, TurnComplete
+from ohmycode.core.messages import TurnComplete
 
 
 class PassiveLoop:
@@ -41,18 +41,6 @@ async def _settle():
 
 
 @pytest.mark.asyncio
-async def test_trigger_delay_skips_fast_tools(monkeypatch):
-    monkeypatch.setattr("desktop.server.session.B_TOOL_TRIGGER_DELAY_SECONDS", 0.01)
-    session = _make_session(monkeypatch)
-
-    await session._on_event_a(ToolCallStart("read", "tool-1", {"path": "x.py"}))
-    await session._on_event_a(ToolCallResult("tool-1", "ok", False))
-    await asyncio.sleep(0.02)
-
-    assert session.loop_b.stream_started == 0
-
-
-@pytest.mark.asyncio
 async def test_b_cooldown_60s(monkeypatch):
     now = 100.0
     monkeypatch.setattr("desktop.server.session.B_COOLDOWN_SECONDS", 60.0)
@@ -70,27 +58,11 @@ async def test_user_typing_mutes_b(monkeypatch):
     session = _make_session(monkeypatch)
 
     session.set_b_muted(True)
-    await session._maybe_trigger_b("tool_executing")
+    await session._maybe_trigger_b("user_input")
     session.set_b_muted(False)
-    await session._maybe_trigger_b("tool_executing")
+    await session._maybe_trigger_b("user_input")
 
     assert session.loop_b.stream_started == 1
-
-
-@pytest.mark.asyncio
-async def test_continuous_edit_no_trigger(monkeypatch):
-    now = 200.0
-    session = _make_session(monkeypatch)
-    monkeypatch.setattr(asyncio.get_event_loop(), "time", lambda: now)
-
-    for index in range(5):
-        await session.handle_user_input(f"edit file again {index}")
-        session.loop_a.stream_started = 0
-        now += 30.0
-
-    await _settle()
-
-    assert session.loop_b.stream_started == 0
 
 
 @pytest.mark.asyncio
@@ -103,17 +75,6 @@ async def test_turn_complete_triggers_once_with_cooldown(monkeypatch):
     await _settle()
     now += 30.0
     await session._on_event_a(TurnComplete("stop", None))
-    await _settle()
-
-    assert session.loop_b.stream_started == 1
-
-
-@pytest.mark.asyncio
-async def test_repeated_error_triggers(monkeypatch):
-    session = _make_session(monkeypatch)
-
-    await session._on_event_a(ToolCallResult("tool-1", "same failure", True))
-    await session._on_event_a(ToolCallResult("tool-2", "same failure", True))
     await _settle()
 
     assert session.loop_b.stream_started == 1

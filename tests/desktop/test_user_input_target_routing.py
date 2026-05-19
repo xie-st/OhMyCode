@@ -46,6 +46,7 @@ async def test_target_a_routes_to_window_a(monkeypatch):
     monkeypatch.setattr("desktop.server.session.ConversationLoop", RoutedLoop)
     sent = []
     session = DesktopSession(OhMyCodeConfig(), sent.append)
+    monkeypatch.setattr(session, "_schedule_b_trigger", lambda reason: None)
 
     await session.handle_user_input("main task", target="A")
     await asyncio.sleep(0)

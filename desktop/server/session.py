@@ -19,7 +19,6 @@ from ohmycode.core.messages import (
     StreamEvent,
     TextChunk,
     ToolCallResult,
-    ToolCallStart,
     TurnComplete,
     UserMessage,
 )
@@ -31,11 +30,11 @@ from ohmycode.memory.backend import (
 
 
 WsSend = Callable[[dict[str, Any]], Awaitable[None] | None]
-B_TOOL_TRIGGER_DELAY_SECONDS = 3.0
 B_COOLDOWN_SECONDS = 60.0
 B_RATE_LIMIT_WINDOW_SECONDS = 600.0
 B_RATE_LIMIT_MAX_TRIGGERS = 5
 PERMISSION_TIMEOUT_SECONDS = 30.0
+B_SILENT_TOKENS = frozenset({"[silent]", "(silent)"})
 WINDOWS_HINT = (
     "\n\nNote: You are running on Windows. The bash tool uses cmd.exe by default; "
     "prefer Windows commands (`dir`, `type`, `findstr`, `where`) over Unix commands "
@@ -106,12 +105,26 @@ class DesktopSession:
         self._load_loop_history(self.loop_a, self.messages_a)
         self.loop_a.set_event_bus(self.bus_a)
 
+        sessions_root = str(
+            Path.home()
+            / ".ohmycode"
+            / "projects"
+            / self.project_slug
+            / "sessions"
+        )
+        inspirations = self.profile.load_inspirations()
+        inspirations_section = (
+            f"## Inspiration resources\n{inspirations}" if inspirations.strip() else ""
+        )
+        b_prompt = GROWTH_AGENT_PROMPT.replace(
+            "{sessions_root}", sessions_root
+        ).replace("{inspirations_section}", inspirations_section)
         b_config = config.model_copy(
             update={
                 "system_prompt_append": (
                     (config.system_prompt_append or "")
                     + "\n\n"
-                    + GROWTH_AGENT_PROMPT.format(project_slug=self.project_slug)
+                    + b_prompt
                 ),
                 "model": _pick_b_model(config),
             }
@@ -130,9 +143,10 @@ class DesktopSession:
         self._b_last_trigger_at: float = 0.0
         self._b_trigger_times: list[float] = []
         self._b_muted: bool = False
-        self._pending_tool_triggers: set[str] = set()
         self._a_error_history: list[str] = []
         self._a_last_text: str = ""
+        self._b_pending_text: str = ""
+        self._last_b_trigger_reason: str = ""
         self._background_tasks: set[asyncio.Task] = set()
 
     def _with_windows_hint(self, config: OhMyCodeConfig) -> OhMyCodeConfig:
@@ -233,30 +247,51 @@ class DesktopSession:
     async def _on_event_a(self, event: StreamEvent) -> None:
         self.profile.observe_event(event, "A")
         await self._send(serialize_event(event))
-        if isinstance(event, ToolCallStart):
-            # Add to pending set synchronously here so a fast ToolCallResult
-            # arriving before the delayed task starts can still discard it.
-            self._pending_tool_triggers.add(event.tool_use_id)
-            self._track_background_task(
-                self._delayed_tool_trigger(event.tool_use_id, "tool_executing")
-            )
-        elif isinstance(event, ToolCallResult):
-            self._pending_tool_triggers.discard(event.tool_use_id)
+        if isinstance(event, ToolCallResult):
             if event.is_error:
                 self._a_error_history.append(event.result[:200])
                 self._a_error_history = self._a_error_history[-5:]
-                if (
-                    len(self._a_error_history) >= 2
-                    and self._a_error_history[-1] == self._a_error_history[-2]
-                ):
-                    self._schedule_b_trigger("repeated_error")
         elif isinstance(event, TextChunk):
             self._a_last_text = f"{self._a_last_text}{event.text}"[-4000:]
         elif isinstance(event, TurnComplete):
             self._schedule_b_trigger("turn_complete")
 
     async def _on_event_b(self, event: StreamEvent) -> None:
+        if isinstance(event, TextChunk):
+            self._b_pending_text += event.text
+            if self._b_silent_pending():
+                return
+            text = self._b_pending_text
+            self._b_pending_text = ""
+            await self._send_with_window(TextChunk(text), "B")
+            return
+        if isinstance(event, TurnComplete):
+            text = self._b_pending_text.strip().lower()
+            if text in B_SILENT_TOKENS:
+                await self._send(
+                    {
+                        "type": "b_silent",
+                        "window": "B",
+                        "data": {
+                            "reason": self._last_b_trigger_reason
+                            or "turn_complete"
+                        },
+                    }
+                )
+                self._b_pending_text = ""
+                return
+            if self._b_pending_text:
+                await self._send_with_window(TextChunk(self._b_pending_text), "B")
+                self._b_pending_text = ""
+            await self._send_with_window(event, "B")
+            return
+        if self._b_pending_text and self._b_silent_pending():
+            return
         await self._send_with_window(event, "B")
+
+    def _b_silent_pending(self) -> bool:
+        head = self._b_pending_text.lstrip()[:9].lower()
+        return head.startswith(("[", "(")) and len(self._b_pending_text) < 12
 
     async def _send_with_window(self, event: StreamEvent, window: str) -> None:
         payload = serialize_event(event)
@@ -270,12 +305,6 @@ class DesktopSession:
         task = asyncio.create_task(coro)
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
-
-    async def _delayed_tool_trigger(self, tool_use_id: str, reason: str) -> None:
-        await asyncio.sleep(B_TOOL_TRIGGER_DELAY_SECONDS)
-        if tool_use_id in self._pending_tool_triggers:
-            self._pending_tool_triggers.discard(tool_use_id)
-            await self._maybe_trigger_b(reason)
 
     def set_b_muted(self, muted: bool) -> None:
         self._b_muted = muted
@@ -330,10 +359,12 @@ class DesktopSession:
             self._b_last_trigger_at = now
             self._b_trigger_times.append(now)
             self._b_turn_task = asyncio.current_task()
+            self._last_b_trigger_reason = reason
             snapshot = self.profile.snapshot_for_b(current_text=self._a_last_text)
             observation = (
-                f"[Observation] Window A is running {reason}\n"
-                f"[Profile] {snapshot}"
+                f"[trigger_reason] {reason}\n"
+                f"[profile_snapshot] {snapshot}\n"
+                f"[window_a_context] {self._a_last_text[-2000:]}"
             )
             self.loop_b.add_user_message(observation)
             try:
@@ -358,10 +389,12 @@ class DesktopSession:
         self.profile.observe_user_message(text)
         self._a_last_text = ""
         self.loop_a.add_user_message(text)
+        self._schedule_b_trigger("user_input")
         self._turn_task = asyncio.create_task(self._run_turn())
 
     async def _run_explicit_b_turn(self, text: str) -> None:
         async with self._b_lock:
+            self._last_b_trigger_reason = "user_explicit"
             self.loop_b.add_user_message(text)
             self._b_turn_task = asyncio.current_task()
             try:
@@ -415,8 +448,9 @@ class DesktopSession:
         self._turn_task = None
         self._b_turn_task = None
         self._a_last_text = ""
+        self._b_pending_text = ""
+        self._last_b_trigger_reason = ""
         self._a_error_history = []
-        self._pending_tool_triggers = set()
         self._b_last_trigger_at = 0.0
         self._b_trigger_times = []
 

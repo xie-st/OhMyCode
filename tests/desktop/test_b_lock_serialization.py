@@ -4,12 +4,12 @@ import pytest
 
 from desktop.server.session import DesktopSession
 from ohmycode.config.config import OhMyCodeConfig
-from ohmycode.core.messages import TextChunk, ToolCallStart
+from ohmycode.core.messages import TextChunk
 
 
 @pytest.mark.asyncio
 async def test_b_lock_allows_only_one_active_b_turn(monkeypatch):
-    monkeypatch.setattr("desktop.server.session.B_TOOL_TRIGGER_DELAY_SECONDS", 0.0)
+    monkeypatch.setattr("desktop.server.session.B_COOLDOWN_SECONDS", 0.0)
     instances = []
 
     class FakeLoop:
@@ -33,13 +33,6 @@ async def test_b_lock_allows_only_one_active_b_turn(monkeypatch):
 
         async def stream_turn(self):
             self.stream_started += 1
-            if self.role == "A":
-                for index in range(3):
-                    event = ToolCallStart("read", f"tool-{index}", {"path": "x.py"})
-                    await self.bus.publish(event)
-                    yield event
-                return
-
             await asyncio.sleep(0.1)
             event = TextChunk("one b turn")
             await self.bus.publish(event)
@@ -48,15 +41,12 @@ async def test_b_lock_allows_only_one_active_b_turn(monkeypatch):
     monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
     session = DesktopSession(OhMyCodeConfig(), lambda _: None)
 
-    await session.handle_user_input("trigger tools")
-    await asyncio.wait_for(session._turn_task, timeout=1)
-    for _ in range(5):
-        if session._b_turn_task is not None:
-            break
-        await asyncio.sleep(0)
-    await asyncio.wait_for(session._b_turn_task, timeout=1)
+    first = asyncio.create_task(session._maybe_trigger_b("user_input"))
+    await asyncio.sleep(0)
+    second = asyncio.create_task(session._maybe_trigger_b("turn_complete"))
+    await asyncio.wait_for(asyncio.gather(first, second), timeout=1)
 
     assert instances[1].stream_started == 1
     assert len(instances[1].messages) == 1
-    assert "[Observation] Window A is running tool_executing" in instances[1].messages[0]
-    assert "[Profile] User profile snapshot" in instances[1].messages[0]
+    assert "[trigger_reason] user_input" in instances[1].messages[0]
+    assert "[profile_snapshot] User profile snapshot" in instances[1].messages[0]
