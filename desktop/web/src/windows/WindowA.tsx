@@ -37,7 +37,7 @@ export function WindowA({ sendMessage, sendUserTyping }: WindowAProps) {
   }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col">
+    <section className="flex h-full flex-col">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 px-4">
         <h1 className="text-sm font-semibold tracking-normal text-zinc-100">Window A</h1>
         <span className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300">

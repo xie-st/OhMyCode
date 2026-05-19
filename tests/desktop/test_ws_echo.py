@@ -36,6 +36,7 @@ def test_ws_routes_user_input(monkeypatch):
     monkeypatch.setattr(ws_module, "DesktopSession", FakeSession)
 
     with TestClient(app).websocket_connect("/ws") as websocket:
+        _consume_runtime_info(websocket)
         websocket.send_json({"type": "user_input", "data": {"text": "hello"}})
         websocket.send_json({"type": "user_typing", "data": {"typing": True}})
         websocket.send_json(
@@ -52,10 +53,19 @@ def test_ws_routes_user_input(monkeypatch):
     assert FakeSession.cancelled >= 1
 
 
+def _consume_runtime_info(websocket):
+    """Drop the server's startup runtime_info push so subsequent assertions
+    look at the test-specific response."""
+    first = websocket.receive_json()
+    assert first["type"] == "runtime_info"
+    assert {"cwd", "a_model", "b_model", "provider"} <= set(first["data"].keys())
+
+
 def test_ws_echoes_json_payload(monkeypatch):
     monkeypatch.setattr(ws_module, "DesktopSession", FakeSession)
 
     with TestClient(app).websocket_connect("/ws") as websocket:
+        _consume_runtime_info(websocket)
         payload = {"type": "ping", "data": {"x": 1}}
 
         websocket.send_json(payload)
@@ -67,6 +77,7 @@ def test_ws_reports_invalid_json(monkeypatch):
     monkeypatch.setattr(ws_module, "DesktopSession", FakeSession)
 
     with TestClient(app).websocket_connect("/ws") as websocket:
+        _consume_runtime_info(websocket)
         websocket.send_text("{")
 
         assert websocket.receive_json()["type"] == "error"

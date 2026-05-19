@@ -7,7 +7,7 @@ export function WindowB() {
   const status = useAppStore((state) => state.status)
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-amber-50 text-stone-900">
+    <section className="flex h-full flex-col bg-amber-50 text-stone-900">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-amber-200 px-3 py-2 text-xs text-stone-600">
         <span className="font-medium text-stone-800">小柚 · 成长伙伴</span>
         <div className="flex items-center gap-3">

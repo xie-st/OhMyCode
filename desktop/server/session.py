@@ -29,12 +29,17 @@ PERMISSION_TIMEOUT_SECONDS = 30.0
 
 
 def _pick_b_model(config: OhMyCodeConfig) -> str:
-    """Pick a smaller model for Window B when the provider is known."""
-    if config.provider == "anthropic":
-        return "claude-haiku-4-5-20251001"
-    if config.provider == "openai":
-        return "gpt-4o-mini"
-    return config.model
+    """Pick model for Window B.
+
+    Explicit ``window_b_model`` wins; otherwise mirror the main ``model``.
+
+    The previous hardcode (``provider=='openai' -> gpt-4o-mini``) assumed
+    ``provider`` named the vendor, but ``provider`` is a protocol family:
+    DeepSeek/Moonshot/Azure all set ``provider='openai'`` plus a custom
+    ``base_url`` and reject foreign model names. Sharing the main model is
+    the only universally-safe default.
+    """
+    return config.window_b_model or config.model
 
 
 class DesktopSession:

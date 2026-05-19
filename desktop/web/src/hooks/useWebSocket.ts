@@ -2,23 +2,45 @@ import { useCallback, useEffect, useRef } from 'react'
 import { useAppStore, type PermissionAnswer } from '../state/store'
 
 const WS_URL = 'ws://localhost:5173/ws'
+const AUTO_RETRY_DELAY_MS = 2000
 
 export function useWebSocket() {
   const socketRef = useRef<WebSocket | null>(null)
+  const autoRetryTriedRef = useRef(false)
+  const autoRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const unmuteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const ingestEvent = useAppStore((state) => state.ingestEvent)
   const appendUserMessage = useAppStore((state) => state.appendUserMessage)
   const setStatus = useAppStore((state) => state.setStatus)
   const setUserTypingState = useAppStore((state) => state.setUserTyping)
 
-  useEffect(() => {
+  const connect = useCallback(() => {
+    if (autoRetryTimerRef.current) {
+      clearTimeout(autoRetryTimerRef.current)
+      autoRetryTimerRef.current = null
+    }
+    if (socketRef.current && socketRef.current.readyState !== WebSocket.CLOSED) {
+      socketRef.current.close()
+    }
     setStatus('connecting')
     const socket = new WebSocket(WS_URL)
     socketRef.current = socket
 
-    socket.onopen = () => setStatus('open')
-    socket.onclose = () => setStatus('closed')
+    socket.onopen = () => {
+      autoRetryTriedRef.current = false
+      setStatus('open')
+    }
     socket.onerror = () => setStatus('error')
+    socket.onclose = () => {
+      setStatus('closed')
+      if (!autoRetryTriedRef.current) {
+        autoRetryTriedRef.current = true
+        autoRetryTimerRef.current = setTimeout(() => {
+          autoRetryTimerRef.current = null
+          connect()
+        }, AUTO_RETRY_DELAY_MS)
+      }
+    }
     socket.onmessage = (message) => {
       try {
         ingestEvent(JSON.parse(message.data))
@@ -26,15 +48,23 @@ export function useWebSocket() {
         setStatus('error')
       }
     }
-
-    return () => {
-      if (unmuteTimerRef.current) {
-        clearTimeout(unmuteTimerRef.current)
-      }
-      socket.close()
-      socketRef.current = null
-    }
   }, [ingestEvent, setStatus])
+
+  const reconnect = useCallback(() => {
+    autoRetryTriedRef.current = false
+    connect()
+  }, [connect])
+
+  useEffect(() => {
+    connect()
+    return () => {
+      if (unmuteTimerRef.current) clearTimeout(unmuteTimerRef.current)
+      if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current)
+      const socket = socketRef.current
+      socketRef.current = null
+      if (socket) socket.close()
+    }
+  }, [connect])
 
   const sendMessage = useCallback(
     (text: string) => {
@@ -93,5 +123,5 @@ export function useWebSocket() {
     [setUserTypingState],
   )
 
-  return { sendMessage, cancel, sendUserTyping, sendPermissionResponse }
+  return { sendMessage, cancel, sendUserTyping, sendPermissionResponse, reconnect }
 }

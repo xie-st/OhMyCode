@@ -18,6 +18,7 @@ class OhMyCodeConfig(BaseModel):
 
     provider: str = "openai"
     model: str = "gpt-4o"
+    window_b_model: str = ""  # Desktop Window B; empty -> use main `model`
     mode: str = "default"
     max_turns: int = 100
     token_budget: int = 200000

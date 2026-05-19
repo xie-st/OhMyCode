@@ -1,5 +1,7 @@
 import asyncio
+import os
 from json import JSONDecodeError
+from pathlib import Path
 
 from fastapi import APIRouter, WebSocket
 from starlette.websockets import WebSocketDisconnect
@@ -11,6 +13,16 @@ from ohmycode.config.config import load_config
 router = APIRouter()
 _connection_lock = asyncio.Lock()
 _connected = False
+
+
+def _short_cwd() -> str:
+    """Render cwd as a short relative path for the status bar."""
+    cwd = Path(os.getcwd())
+    try:
+        rel = cwd.relative_to(Path.home())
+        return f"~/{rel.as_posix()}"
+    except ValueError:
+        return cwd.as_posix()
 
 
 @router.websocket("/ws")
@@ -32,8 +44,20 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     session: DesktopSession | None = None
     try:
-        session = DesktopSession(load_config({}), ws_send)
+        config = load_config({})
+        session = DesktopSession(config, ws_send)
         websocket.app.state.session = session
+        await ws_send(
+            {
+                "type": "runtime_info",
+                "data": {
+                    "cwd": _short_cwd(),
+                    "a_model": config.model,
+                    "b_model": config.window_b_model or config.model,
+                    "provider": config.provider,
+                },
+            }
+        )
         while True:
             try:
                 payload = await websocket.receive_json()
