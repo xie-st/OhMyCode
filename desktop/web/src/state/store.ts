@@ -16,6 +16,7 @@ export interface Message {
   role: 'user' | 'assistant'
   text: string
   toolCalls?: ToolCall[]
+  error?: string
 }
 
 export interface ProfileEvidence {
@@ -59,11 +60,14 @@ interface AppState {
   status: ConnectionStatus
   messagesA: Message[]
   messagesB: Message[]
+  isATurnActive: boolean
   bTrigger: string
+  bTriggerClearAt: number | null
   profile: Profile | null
   userTyping: boolean
   pendingPermission: PermissionRequest | null
   setStatus(status: ConnectionStatus): void
+  setATurnActive(active: boolean): void
   setUserTyping(typing: boolean): void
   clearPendingPermission(): void
   fetchProfile(): Promise<void>
@@ -74,8 +78,9 @@ interface AppState {
 }
 
 const makeId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+let bTriggerTimer: ReturnType<typeof setTimeout> | null = null
 
-const ensureAssistant = (messages: Message[]) => {
+const ensureAssistant = (messages: Message[]): Message[] => {
   const last = messages[messages.length - 1]
   if (last?.role === 'assistant') {
     return messages
@@ -83,7 +88,7 @@ const ensureAssistant = (messages: Message[]) => {
   return [...messages, { id: makeId(), role: 'assistant', text: '', toolCalls: [] }]
 }
 
-const ingestMessageEvent = (messages: Message[], event: StreamEvent) => {
+const ingestMessageEvent = (messages: Message[], event: StreamEvent): Message[] => {
   if (event.type === 'TextChunk') {
     const nextMessages = ensureAssistant(messages)
     const last = nextMessages[nextMessages.length - 1]
@@ -126,16 +131,38 @@ const ingestMessageEvent = (messages: Message[], event: StreamEvent) => {
   return messages
 }
 
+const getEventWindow = (event: StreamEvent) => event.window ?? event.data.window
+
+const scheduleBTriggerClear = () => {
+  if (bTriggerTimer) {
+    clearTimeout(bTriggerTimer)
+  }
+
+  const clearAt = Date.now() + 5000
+  bTriggerTimer = setTimeout(() => {
+    useAppStore.setState((state) =>
+      state.bTriggerClearAt === clearAt ? { bTrigger: '', bTriggerClearAt: null } : {},
+    )
+    bTriggerTimer = null
+  }, 5000)
+
+  return clearAt
+}
+
 export const useAppStore = create<AppState>((set) => ({
   status: 'connecting',
   messagesA: [],
   messagesB: [],
+  isATurnActive: false,
   bTrigger: '',
+  bTriggerClearAt: null,
   profile: null,
   userTyping: false,
   pendingPermission: null,
 
   setStatus: (status) => set({ status }),
+
+  setATurnActive: (isATurnActive) => set({ isATurnActive }),
 
   setUserTyping: (userTyping) => set({ userTyping }),
 
@@ -169,12 +196,31 @@ export const useAppStore = create<AppState>((set) => ({
   appendUserMessage: (text) =>
     set((state) => ({
       messagesA: [...state.messagesA, { id: makeId(), role: 'user', text }],
+      isATurnActive: true,
     })),
 
   ingestEvent: (event) =>
     set((state) => {
+      const eventWindow = getEventWindow(event)
+
       if (event.type === 'error') {
-        return { status: 'error' }
+        if (eventWindow === 'B') {
+          return {
+            messagesB: [
+              ...state.messagesB,
+              {
+                id: makeId(),
+                role: 'assistant',
+                text: 'B window could not finish the explanation.',
+                error: String(event.data.message ?? 'unknown error'),
+              },
+            ],
+            bTrigger: '',
+            bTriggerClearAt: null,
+          }
+        }
+
+        return { status: 'error', isATurnActive: false }
       }
 
       if (event.type === 'permission_request') {
@@ -188,18 +234,19 @@ export const useAppStore = create<AppState>((set) => ({
         }
       }
 
-      if (event.window === 'B') {
+      if (eventWindow === 'B') {
         if (event.type === 'TurnComplete') {
-          return { bTrigger: '' }
+          return { bTriggerClearAt: scheduleBTriggerClear() }
         }
         return {
           messagesB: ingestMessageEvent(state.messagesB, event),
-          bTrigger: event.type === 'TextChunk' ? '讲解中' : state.bTrigger,
+          bTrigger: event.type === 'TextChunk' ? 'Explaining' : state.bTrigger,
+          bTriggerClearAt: null,
         }
       }
 
       if (event.type === 'TurnComplete') {
-        return state
+        return { isATurnActive: false }
       }
 
       return { messagesA: ingestMessageEvent(state.messagesA, event) }

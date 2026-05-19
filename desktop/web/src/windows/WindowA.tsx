@@ -19,6 +19,7 @@ export function WindowA({ sendMessage, sendUserTyping }: WindowAProps) {
   const [focused, setFocused] = useState(false)
   const messages = useAppStore((state) => state.messagesA)
   const status = useAppStore((state) => state.status)
+  const isATurnActive = useAppStore((state) => state.isATurnActive)
 
   const submit = (event?: FormEvent) => {
     event?.preventDefault()
@@ -45,7 +46,7 @@ export function WindowA({ sendMessage, sendUserTyping }: WindowAProps) {
         </span>
       </header>
 
-      <MessageList messages={messages} />
+      <MessageList messages={messages} showSpinner={isATurnActive} spinnerLabel="Thinking" />
 
       <form onSubmit={submit} className="shrink-0 border-t border-zinc-800 p-4">
         <div className="mx-auto flex max-w-4xl gap-2">

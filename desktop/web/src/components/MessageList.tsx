@@ -1,14 +1,23 @@
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
+import { Spinner } from './Spinner'
 import type { Message } from '../state/store'
 
 interface MessageListProps {
   messages: Message[]
   role?: 'all' | 'assistant-only'
   tone?: 'dark' | 'amber'
+  showSpinner?: boolean
+  spinnerLabel?: string
 }
 
-export function MessageList({ messages, role = 'all', tone = 'dark' }: MessageListProps) {
+export function MessageList({
+  messages,
+  role = 'all',
+  tone = 'dark',
+  showSpinner = false,
+  spinnerLabel = 'Thinking',
+}: MessageListProps) {
   const visibleMessages =
     role === 'assistant-only'
       ? messages.filter((message) => message.role === 'assistant')
@@ -31,6 +40,7 @@ export function MessageList({ messages, role = 'all', tone = 'dark' }: MessageLi
         {visibleMessages.map((message) => (
           <MessageBubble key={message.id} message={message} tone={tone} />
         ))}
+        {showSpinner && <Spinner label={spinnerLabel} />}
       </div>
     </div>
   )
@@ -80,6 +90,13 @@ function MessageBubble({ message, tone }: { message: Message; tone: 'dark' | 'am
           )}
         </div>
       ))}
+
+      {message.error && (
+        <details className="mt-2 text-xs text-rose-400">
+          <summary className="cursor-pointer">Error details</summary>
+          <pre className="mt-1 whitespace-pre-wrap font-mono">{message.error}</pre>
+        </details>
+      )}
     </article>
   )
 }
