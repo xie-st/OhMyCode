@@ -69,11 +69,18 @@ async def test_on_event_serializes_tool_events_and_usage(monkeypatch):
                 "tool_name": "read",
                 "tool_use_id": "tool-1",
                 "params": {"path": "x.py"},
+                "params_preview": '{"path": "x.py"}',
             },
         },
         {
             "type": "ToolCallResult",
-            "data": {"tool_use_id": "tool-1", "result": "ok", "is_error": False},
+            "data": {
+                "tool_use_id": "tool-1",
+                "result": "ok",
+                "is_error": False,
+                "result_preview": "ok",
+                "is_truncated": False,
+            },
         },
         {
             "type": "TurnComplete",

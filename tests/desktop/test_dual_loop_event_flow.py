@@ -62,6 +62,7 @@ async def test_tool_call_from_a_triggers_window_b_turn(monkeypatch):
             "tool_name": "read",
             "tool_use_id": "tool-1",
             "params": {"path": "x.py"},
+            "params_preview": '{"path": "x.py"}',
         },
     }
     assert {

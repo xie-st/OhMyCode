@@ -122,7 +122,7 @@ function ToolCallCard({ tool, tone }: { tool: ToolCall; tone: 'dark' | 'amber' }
         {tool.name}
       </div>
       <pre className={tone === 'amber' ? 'mt-2 text-stone-500' : 'mt-2 text-zinc-400'}>
-        {formatParams(tool.params)}
+        {formatParams(tool)}
       </pre>
       <ToolResult tool={tool} tone={tone} />
     </div>
@@ -131,16 +131,15 @@ function ToolCallCard({ tool, tone }: { tool: ToolCall; tone: 'dark' | 'amber' }
 
 function ToolResult({ tool, tone }: { tool: ToolCall; tone: 'dark' | 'amber' }) {
   const [expanded, setExpanded] = useState(false)
-  if (tool.result === undefined) {
+  if (tool.result === undefined && tool.resultPreview === undefined) {
     return null
   }
-
-  const lines = tool.result.split('\n')
-  const isTruncated = lines.length > 10 || tool.result.length > 500
-  const shown =
-    expanded || !isTruncated
-      ? tool.result
-      : trimChars(lines.slice(0, 10).join('\n'), 500)
+  // Preview comes from the server (desktop/server/render_rules.py); fall back
+  // to raw result only if the server somehow didn't send a preview.
+  const preview = tool.resultPreview ?? tool.result ?? ''
+  const fullText = tool.result ?? preview
+  const shown = expanded ? fullText : preview
+  const totalLines = fullText.split('\n').length
   const resultClass = tool.isError
     ? 'mt-2 whitespace-pre-wrap text-red-600'
     : tone === 'amber'
@@ -150,23 +149,21 @@ function ToolResult({ tool, tone }: { tool: ToolCall; tone: 'dark' | 'amber' }) 
   return (
     <div>
       <pre className={resultClass}>{`${tool.isError ? 'Error' : 'Result'}\n${shown}`}</pre>
-      {isTruncated && (
+      {tool.isTruncated && (
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
           className={tone === 'amber' ? 'mt-2 text-xs text-amber-700' : 'mt-2 text-xs text-cyan-300'}
         >
-          {expanded ? 'Collapse' : `Show more (${lines.length} lines)`}
+          {expanded ? 'Collapse' : `Show more (${totalLines} lines)`}
         </button>
       )}
     </div>
   )
 }
 
-function formatParams(params: unknown) {
-  return trimChars(JSON.stringify(params, null, 2), 100)
-}
-
-function trimChars(text: string, maxChars: number) {
-  return text.length > maxChars ? `${text.slice(0, maxChars - 3)}...` : text
+function formatParams(tool: ToolCall) {
+  // Server-rendered preview (render_rules.py truncate_params) is the single
+  // source of truth; fall back to a local JSON dump only if it's missing.
+  return tool.paramsPreview ?? JSON.stringify(tool.params)
 }

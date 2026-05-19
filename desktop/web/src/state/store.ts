@@ -7,7 +7,10 @@ export interface ToolCall {
   id: string
   name: string
   params: unknown
-  result?: string
+  paramsPreview?: string      // server-side truncated (see render_rules.py)
+  result?: string             // full text, kept for the expand toggle
+  resultPreview?: string      // server-side truncated
+  isTruncated?: boolean       // whether resultPreview is shorter than result
   isError?: boolean
 }
 
@@ -145,6 +148,10 @@ const ingestMessageEvent = (messages: Message[], event: StreamEvent): Message[] 
           id: String(event.data.tool_use_id ?? ''),
           name: String(event.data.tool_name ?? ''),
           params: event.data.params ?? {},
+          paramsPreview:
+            typeof event.data.params_preview === 'string'
+              ? event.data.params_preview
+              : undefined,
         },
       },
     ]
@@ -159,6 +166,11 @@ const ingestMessageEvent = (messages: Message[], event: StreamEvent): Message[] 
       ...nextMessages.slice(0, -1),
       updateToolSegment(last, toolId, {
         result: String(event.data.result ?? ''),
+        resultPreview:
+          typeof event.data.result_preview === 'string'
+            ? event.data.result_preview
+            : undefined,
+        isTruncated: Boolean(event.data.is_truncated),
         isError: Boolean(event.data.is_error),
       }),
     ]
