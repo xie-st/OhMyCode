@@ -22,7 +22,10 @@ the kernel and adds a FastAPI + React desktop UI without modifying the kernel.
 - **UserProfile** — per-project JSON profile (skills / concepts / gaps) under `~/.ohmycode/projects/<slug>/profile/profile.json`
 - **Window B throttling stack** — `_b_lock` + 60s cooldown + 10min/5x cap + 3s tool-trigger delay + typing-mute
 - **CORE_CONCEPTS** — 9 mastery-tracked concepts in `desktop/server/profile.py`
-- **小柚** — Window B persona, locked in `desktop/server/growth_prompt.py`
+- **小柚** — Window B persona, locked in `desktop/server/growth_prompt.py`. A full coding agent with the same tool surface as Window A, but the prompt frames its job as *coaching*, not task execution. After every A `TurnComplete` (and on user `@B`) it runs one turn and decides whether to speak.
+- **`[silent]` sentinel** — when 小柚 decides the current turn has nothing worth saying, it outputs the single literal `[silent]` token (case-insensitive, surrounding whitespace allowed) as the *entire* turn. The server checks this at `TurnComplete`, suppresses the message, and pushes a `b_silent` event so the front-end spinner closes without rendering anything.
+- **询问式展开** — Window B never volunteers a long explanation. Its default turn output is a *short identification* of an angle worth thinking about, followed by an *ask*: "I noticed X — want to talk through it?" Only after the user says yes (via `@B`) does B actually expand. Both microview (why / pattern / transfer for the current task) and macroview (AI-era growth: what AI takes vs what humans should learn) are surfaced this way — no asymmetry between them. B fires on three triggers: `user_input` (the moment the user sends a message to A, *before* A finishes thinking — fills the wait), `turn_complete` (after A's turn), and `user_explicit` (`@B`). See `docs/adr/0001-window-b-coach-agent.md`.
+- **concept_dispositions** — per-concept user preference (`learn` / `delegate` / `skip`) stored on `UserProfile`. Soft hint to 小柚, not a hard rule; B can break ranks for a key insight but must justify it.
 
 ## Current state
 
