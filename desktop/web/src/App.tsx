@@ -1,53 +1,26 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import { PermissionDialog } from './components/PermissionDialog'
+import { InputBar } from './components/InputBar'
+import { PermissionPanel } from './components/PermissionPanel'
 import { ProfileDrawer } from './components/ProfileDrawer'
+import { Sidebar } from './components/Sidebar'
+import { StatusBar } from './components/StatusBar'
 import { useWebSocket } from './hooks/useWebSocket'
-import { PrototypeSwitcher } from './prototypes/PrototypeSwitcher'
-import { VariantA } from './prototypes/VariantA'
-import { VariantB } from './prototypes/VariantB'
-import { VariantC } from './prototypes/VariantC'
 import { useAppStore } from './state/store'
 import { WindowA } from './windows/WindowA'
 import { WindowB } from './windows/WindowB'
 
 export default function App() {
-  const [variant, setVariant] = useState<string | null>(() => {
-    if (typeof window === 'undefined') {
-      return null
-    }
-    return new URLSearchParams(window.location.search).get('variant')
-  })
-
-  const setVariantWithUrl = useCallback((nextVariant: string) => {
-    setVariant(nextVariant)
-    const url = new URL(window.location.href)
-    url.searchParams.set('variant', nextVariant)
-    window.history.replaceState({}, '', url)
-  }, [])
-
-  if (variant && import.meta.env.DEV) {
-    const Cmp = variant === 'A' ? VariantA : variant === 'B' ? VariantB : VariantC
-    return (
-      <>
-        <Cmp />
-        <PrototypeSwitcher
-          variants={['A', 'B', 'C']}
-          current={variant}
-          onChange={setVariantWithUrl}
-        />
-      </>
-    )
-  }
-
-  return <DesktopApp />
-}
-
-function DesktopApp() {
   const [showProfile, setShowProfile] = useState(false)
   const pendingPermission = useAppStore((state) => state.pendingPermission)
   const clearPendingPermission = useAppStore((state) => state.clearPendingPermission)
-  const { sendMessage, cancel, sendUserTyping, sendPermissionResponse } = useWebSocket()
+  const {
+    sendMessage,
+    cancel,
+    sendUserTyping,
+    sendPermissionResponse,
+    reconnect,
+  } = useWebSocket()
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -65,35 +38,33 @@ function DesktopApp() {
   }, [cancel, pendingPermission])
 
   return (
-    <main className="h-screen bg-zinc-950 text-zinc-100">
-      <button
-        className="fixed right-4 top-3 z-30 rounded border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs text-zinc-200 hover:bg-zinc-800"
-        onClick={() => setShowProfile(true)}
-      >
-        我的画像
-      </button>
-      <PanelGroup direction="horizontal">
-        <Panel defaultSize={60} minSize={30}>
-          <WindowA
-            sendMessage={sendMessage}
-            sendUserTyping={sendUserTyping}
-          />
-        </Panel>
-        <PanelResizeHandle className="w-1 cursor-col-resize bg-zinc-300 hover:bg-zinc-400" />
-        <Panel defaultSize={40} minSize={20}>
-          <WindowB />
-        </Panel>
-      </PanelGroup>
+    <main className="flex h-screen flex-col bg-stone-50 text-stone-900">
+      <StatusBar onProfile={() => setShowProfile(true)} onReconnect={reconnect} />
+      <div className="flex min-h-0 flex-1">
+        <Sidebar />
+        <section className="flex min-w-0 flex-1 flex-col">
+          <PanelGroup direction="horizontal">
+            <Panel defaultSize={60} minSize={30}>
+              <WindowA />
+            </Panel>
+            <PanelResizeHandle className="w-1 cursor-col-resize bg-stone-200 hover:bg-stone-300" />
+            <Panel defaultSize={40} minSize={20}>
+              <WindowB />
+            </Panel>
+          </PanelGroup>
+          {pendingPermission && (
+            <PermissionPanel
+              request={pendingPermission}
+              onResponse={(answer) => {
+                sendPermissionResponse(pendingPermission.request_id, answer)
+                clearPendingPermission()
+              }}
+            />
+          )}
+          <InputBar sendMessage={sendMessage} sendUserTyping={sendUserTyping} />
+        </section>
+      </div>
       <ProfileDrawer open={showProfile} onClose={() => setShowProfile(false)} />
-      {pendingPermission && (
-        <PermissionDialog
-          request={pendingPermission}
-          onResponse={(answer) => {
-            sendPermissionResponse(pendingPermission.request_id, answer)
-            clearPendingPermission()
-          }}
-        />
-      )}
     </main>
   )
 }

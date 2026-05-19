@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+const FRAMES = ['|', '/', '-', '\\']
 
 interface SpinnerProps {
   label?: string
@@ -16,7 +16,7 @@ export function Spinner({ label = 'Thinking', className = '' }: SpinnerProps) {
   }, [])
 
   return (
-    <span className={`font-mono text-sm text-amber-500/80 ${className}`}>
+    <span className={`font-mono text-sm text-emerald-600 ${className}`}>
       {FRAMES[i]} {label}...
     </span>
   )

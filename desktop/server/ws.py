@@ -67,8 +67,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             message_type = payload.get("type")
             if message_type == "user_input":
-                text = payload.get("data", {}).get("text", "")
-                await session.handle_user_input(text)
+                data = payload.get("data", {})
+                text = data.get("text", "")
+                target = "B" if data.get("target") == "B" else "A"
+                await session.handle_user_input(text, target)
             elif message_type == "user_typing":
                 is_typing = bool(payload.get("data", {}).get("typing", False))
                 session.set_b_muted(is_typing)

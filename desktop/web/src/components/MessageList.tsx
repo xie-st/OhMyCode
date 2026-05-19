@@ -1,72 +1,49 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
-import { Spinner } from './Spinner'
 import type { AssistantSegment, Message, ToolCall } from '../state/store'
+import { Spinner } from './Spinner'
 
 interface MessageListProps {
   messages: Message[]
-  role?: 'all' | 'assistant-only'
-  tone?: 'dark' | 'amber'
+  tone?: 'emerald' | 'pink'
   showSpinner?: boolean
   spinnerLabel?: string
 }
 
 export function MessageList({
   messages,
-  role = 'all',
-  tone = 'dark',
+  tone = 'emerald',
   showSpinner = false,
   spinnerLabel = 'Thinking',
 }: MessageListProps) {
-  const visibleMessages =
-    role === 'assistant-only'
-      ? messages.filter((message) => message.role === 'assistant')
-      : messages
-
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
-        {visibleMessages.length === 0 && (
-          <div
-            className={
-              tone === 'amber'
-                ? 'pt-8 text-sm text-stone-500'
-                : 'pt-8 text-sm text-zinc-500'
-            }
-          >
-            {tone === 'amber' ? 'Waiting for a safe moment...' : 'No messages yet.'}
-          </div>
-        )}
-        {visibleMessages.map((message) => (
+        {messages.map((message) => (
           <MessageBubble key={message.id} message={message} tone={tone} />
         ))}
-        {showSpinner && <Spinner label={spinnerLabel} />}
+        {showSpinner && <Spinner label={spinnerLabel} className="text-emerald-600" />}
       </div>
     </div>
   )
 }
 
-function MessageBubble({ message, tone }: { message: Message; tone: 'dark' | 'amber' }) {
-  const assistantClass =
-    tone === 'amber'
-      ? 'w-full text-sm leading-6 text-stone-900'
-      : 'w-full text-sm leading-6 text-zinc-100'
-  const userClass =
-    tone === 'amber'
-      ? 'self-end rounded border border-amber-300 bg-amber-100 px-3 py-2 text-sm text-stone-900'
-      : 'self-end rounded border border-emerald-700 bg-emerald-950 px-3 py-2 text-sm text-emerald-50'
+function MessageBubble({ message, tone }: { message: Message; tone: 'emerald' | 'pink' }) {
+  const marker = tone === 'emerald' ? 'text-emerald-600' : 'text-pink-600'
 
   return (
-    <article className={message.role === 'user' ? userClass : assistantClass}>
+    <article className="w-full text-sm leading-7 text-stone-900">
       {message.role === 'assistant' ? (
         <AssistantContent message={message} tone={tone} />
       ) : (
-        message.text
+        <div className="font-mono text-sm text-stone-700">
+          <span className={marker}>{'>'}</span> {message.text}
+        </div>
       )}
 
       {message.error && (
-        <details className="mt-2 text-xs text-rose-400">
+        <details className="mt-2 text-xs text-pink-700">
           <summary className="cursor-pointer">Error details</summary>
           <pre className="mt-1 whitespace-pre-wrap font-mono">{message.error}</pre>
         </details>
@@ -75,7 +52,7 @@ function MessageBubble({ message, tone }: { message: Message; tone: 'dark' | 'am
   )
 }
 
-function AssistantContent({ message, tone }: { message: Message; tone: 'dark' | 'amber' }) {
+function AssistantContent({ message, tone }: { message: Message; tone: 'emerald' | 'pink' }) {
   const segments = message.segments ?? [{ kind: 'text' as const, text: message.text }]
 
   return (
@@ -96,55 +73,44 @@ function AssistantSegmentView({
   tone,
 }: {
   segment: AssistantSegment
-  tone: 'dark' | 'amber'
+  tone: 'emerald' | 'pink'
 }) {
   if (segment.kind === 'text') {
-    return <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{segment.text || ' '}</ReactMarkdown>
+    return (
+      <div className="prose max-w-none text-[15px] leading-7 text-stone-900">
+        <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{segment.text || ' '}</ReactMarkdown>
+      </div>
+    )
   }
 
   return <ToolCallCard tool={segment.tool} tone={tone} />
 }
 
-function ToolCallCard({ tool, tone }: { tool: ToolCall; tone: 'dark' | 'amber' }) {
+function ToolCallCard({ tool, tone }: { tool: ToolCall; tone: 'emerald' | 'pink' }) {
+  const border = toolBorderClass(tool, tone)
+
   return (
-    <div
-      className={
-        tone === 'amber'
-          ? 'my-3 rounded border border-amber-200 bg-white p-3 text-xs text-stone-700'
-          : 'my-3 rounded border border-zinc-800 bg-zinc-900 p-3 text-xs text-zinc-300'
-      }
-    >
-      <div
-        className={
-          tone === 'amber' ? 'font-medium text-amber-800' : 'font-medium text-cyan-300'
-        }
-      >
-        {tool.name}
-      </div>
-      <pre className={tone === 'amber' ? 'mt-2 text-stone-500' : 'mt-2 text-zinc-400'}>
-        {formatParams(tool)}
-      </pre>
+    <div className={`my-3 rounded-xl border border-stone-200 border-l-2 ${border} bg-white p-3 text-xs text-stone-700 shadow-sm`}>
+      <div className="font-mono font-medium text-stone-900">{tool.name}</div>
+      <pre className="mt-2 text-stone-500">{formatParams(tool)}</pre>
       <ToolResult tool={tool} tone={tone} />
     </div>
   )
 }
 
-function ToolResult({ tool, tone }: { tool: ToolCall; tone: 'dark' | 'amber' }) {
+function ToolResult({ tool, tone }: { tool: ToolCall; tone: 'emerald' | 'pink' }) {
   const [expanded, setExpanded] = useState(false)
   if (tool.result === undefined && tool.resultPreview === undefined) {
     return null
   }
-  // Preview comes from the server (desktop/server/render_rules.py); fall back
-  // to raw result only if the server somehow didn't send a preview.
+
   const preview = tool.resultPreview ?? tool.result ?? ''
   const fullText = tool.result ?? preview
   const shown = expanded ? fullText : preview
   const totalLines = fullText.split('\n').length
   const resultClass = tool.isError
-    ? 'mt-2 whitespace-pre-wrap text-red-600'
-    : tone === 'amber'
-      ? 'mt-2 whitespace-pre-wrap text-stone-700'
-      : 'mt-2 whitespace-pre-wrap text-zinc-300'
+    ? 'mt-2 whitespace-pre-wrap text-pink-700'
+    : 'mt-2 whitespace-pre-wrap text-stone-700'
 
   return (
     <div>
@@ -153,7 +119,7 @@ function ToolResult({ tool, tone }: { tool: ToolCall; tone: 'dark' | 'amber' }) 
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
-          className={tone === 'amber' ? 'mt-2 text-xs text-amber-700' : 'mt-2 text-xs text-cyan-300'}
+          className={tone === 'pink' ? 'mt-2 text-xs text-pink-700' : 'mt-2 text-xs text-emerald-700'}
         >
           {expanded ? 'Collapse' : `Show more (${totalLines} lines)`}
         </button>
@@ -162,8 +128,14 @@ function ToolResult({ tool, tone }: { tool: ToolCall; tone: 'dark' | 'amber' }) 
   )
 }
 
+function toolBorderClass(tool: ToolCall, tone: 'emerald' | 'pink') {
+  if (tool.isError) return 'border-l-pink-500'
+  if (tool.name === 'read') return 'border-l-sky-500'
+  if (tool.name === 'bash') return 'border-l-emerald-500'
+  if (tool.name === 'write' || tool.name === 'edit') return 'border-l-emerald-500'
+  return tone === 'pink' ? 'border-l-pink-500' : 'border-l-emerald-500'
+}
+
 function formatParams(tool: ToolCall) {
-  // Server-rendered preview (render_rules.py truncate_params) is the single
-  // source of truth; fall back to a local JSON dump only if it's missing.
   return tool.paramsPreview ?? JSON.stringify(tool.params)
 }

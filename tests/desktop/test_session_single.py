@@ -142,12 +142,20 @@ def test_window_a_gets_windows_shell_hint_on_windows(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_window_b_confirm_fn_silently_denies_tools(monkeypatch):
+async def test_window_b_confirm_fn_requests_permission(monkeypatch):
     monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
     sent = []
     session = DesktopSession(OhMyCodeConfig(), sent.append)
 
-    answer = await session.loop_b.confirm_fn("read", {"path": "profile.json"})
+    task = asyncio.create_task(
+        session.loop_b.confirm_fn("read", {"path": "profile.json"})
+    )
+    await asyncio.sleep(0)
+    request = sent[-1]
+    request_id = request["data"]["request_id"]
 
-    assert answer == "n"
-    assert not any(item.get("type") == "permission_request" for item in sent)
+    assert request["type"] == "permission_request"
+    assert request["data"]["window"] == "B"
+    assert request["data"]["tool_name"] == "read"
+    assert session.resolve_permission(request_id, "y") is True
+    assert await task == "y"

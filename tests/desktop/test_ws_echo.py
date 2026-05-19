@@ -14,8 +14,8 @@ class FakeSession:
         self.config = config
         self.ws_send = ws_send
 
-    async def handle_user_input(self, text):
-        self.inputs.append(text)
+    async def handle_user_input(self, text, target="A"):
+        self.inputs.append((text, target))
 
     async def cancel(self):
         type(self).cancelled += 1
@@ -37,7 +37,9 @@ def test_ws_routes_user_input(monkeypatch):
 
     with TestClient(app).websocket_connect("/ws") as websocket:
         _consume_runtime_info(websocket)
-        websocket.send_json({"type": "user_input", "data": {"text": "hello"}})
+        websocket.send_json(
+            {"type": "user_input", "data": {"text": "hello", "target": "B"}}
+        )
         websocket.send_json({"type": "user_typing", "data": {"typing": True}})
         websocket.send_json(
             {
@@ -47,7 +49,7 @@ def test_ws_routes_user_input(monkeypatch):
         )
         websocket.send_json({"type": "cancel"})
 
-    assert FakeSession.inputs == ["hello"]
+    assert FakeSession.inputs == [("hello", "B")]
     assert FakeSession.muted == [True]
     assert FakeSession.permissions == [("req-1", "a")]
     assert FakeSession.cancelled >= 1

@@ -54,7 +54,15 @@ export interface PermissionRequest {
   request_id: string
   tool_name: string
   params: Record<string, unknown>
+  paramsPreview?: string
   window: 'A' | 'B'
+}
+
+export interface RuntimeInfo {
+  cwd: string
+  aModel: string
+  bModel: string
+  provider: string
 }
 
 interface StreamEvent {
@@ -67,6 +75,8 @@ interface AppState {
   status: ConnectionStatus
   messagesA: Message[]
   messagesB: Message[]
+  inputTarget: 'A' | 'B'
+  runtime: RuntimeInfo | null
   isATurnActive: boolean
   bTrigger: string
   bTriggerClearAt: number | null
@@ -74,6 +84,7 @@ interface AppState {
   userTyping: boolean
   pendingPermission: PermissionRequest | null
   setStatus(status: ConnectionStatus): void
+  setInputTarget(target: 'A' | 'B'): void
   setATurnActive(active: boolean): void
   setUserTyping(typing: boolean): void
   clearPendingPermission(): void
@@ -81,7 +92,7 @@ interface AppState {
   deleteEvidence(evidenceId: string): Promise<void>
   clearProfile(): Promise<void>
   ingestEvent(event: StreamEvent): void
-  appendUserMessage(text: string): void
+  appendUserMessage(text: string, target?: 'A' | 'B'): void
 }
 
 const makeId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
@@ -201,6 +212,8 @@ export const useAppStore = create<AppState>((set) => ({
   status: 'connecting',
   messagesA: [],
   messagesB: [],
+  inputTarget: 'A',
+  runtime: null,
   isATurnActive: false,
   bTrigger: '',
   bTriggerClearAt: null,
@@ -209,6 +222,8 @@ export const useAppStore = create<AppState>((set) => ({
   pendingPermission: null,
 
   setStatus: (status) => set({ status }),
+
+  setInputTarget: (inputTarget) => set({ inputTarget }),
 
   setATurnActive: (isATurnActive) => set({ isATurnActive }),
 
@@ -241,15 +256,33 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 
-  appendUserMessage: (text) =>
+  appendUserMessage: (text, target = 'A') =>
     set((state) => ({
-      messagesA: [...state.messagesA, { id: makeId(), role: 'user', text }],
-      isATurnActive: true,
+      messagesA:
+        target === 'A'
+          ? [...state.messagesA, { id: makeId(), role: 'user', text }]
+          : state.messagesA,
+      messagesB:
+        target === 'B'
+          ? [...state.messagesB, { id: makeId(), role: 'user', text }]
+          : state.messagesB,
+      isATurnActive: target === 'A' ? true : state.isATurnActive,
     })),
 
   ingestEvent: (event) =>
     set((state) => {
       const eventWindow = getEventWindow(event)
+
+      if (event.type === 'runtime_info') {
+        return {
+          runtime: {
+            cwd: String(event.data.cwd ?? ''),
+            aModel: String(event.data.a_model ?? ''),
+            bModel: String(event.data.b_model ?? ''),
+            provider: String(event.data.provider ?? ''),
+          },
+        }
+      }
 
       if (event.type === 'error') {
         if (eventWindow === 'B') {
@@ -277,6 +310,10 @@ export const useAppStore = create<AppState>((set) => ({
             request_id: String(event.data.request_id ?? ''),
             tool_name: String(event.data.tool_name ?? ''),
             params: (event.data.params ?? {}) as Record<string, unknown>,
+            paramsPreview:
+              typeof event.data.params_preview === 'string'
+                ? event.data.params_preview
+                : undefined,
             window: event.data.window === 'B' ? 'B' : 'A',
           },
         }

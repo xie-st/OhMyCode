@@ -67,14 +67,14 @@ export function useWebSocket() {
   }, [connect])
 
   const sendMessage = useCallback(
-    (text: string) => {
+    (text: string, target: 'A' | 'B' = 'A') => {
       const trimmed = text.trim()
       const socket = socketRef.current
       if (!trimmed || socket?.readyState !== WebSocket.OPEN) {
         return
       }
-      appendUserMessage(trimmed)
-      socket.send(JSON.stringify({ type: 'user_input', data: { text: trimmed } }))
+      appendUserMessage(trimmed, target)
+      socket.send(JSON.stringify({ type: 'user_input', data: { text: trimmed, target } }))
     },
     [appendUserMessage],
   )

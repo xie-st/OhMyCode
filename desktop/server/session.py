@@ -3,11 +3,13 @@ import os
 import uuid
 from collections.abc import Awaitable, Callable
 from inspect import isawaitable
+from pathlib import Path
 from typing import Any
 
 from desktop.server._serialize import serialize_event
 from desktop.server.growth_prompt import GROWTH_AGENT_PROMPT
 from desktop.server.profile import UserProfile
+from desktop.server.render_rules import truncate_params
 from ohmycode.config.config import OhMyCodeConfig
 from ohmycode.core.events import EventBus
 from ohmycode.core.loop import ConversationLoop
@@ -17,6 +19,11 @@ from ohmycode.core.messages import (
     ToolCallResult,
     ToolCallStart,
     TurnComplete,
+)
+from ohmycode.memory.backend import (
+    _canonical_project_root,
+    _find_git_root,
+    _sanitize_slug,
 )
 
 
@@ -55,6 +62,8 @@ class DesktopSession:
         self.config = config
         self._ws_send = ws_send
         self.profile = UserProfile.for_cwd(os.getcwd())
+        self.project_slug = self._project_slug()
+        self._ensure_inspiration_dirs()
         self._pending_perms: dict[str, asyncio.Future[str]] = {}
         self._auto_approved_tools: set[str] = set()
 
@@ -71,7 +80,7 @@ class DesktopSession:
                 "system_prompt_append": (
                     (config.system_prompt_append or "")
                     + "\n\n"
-                    + GROWTH_AGENT_PROMPT
+                    + GROWTH_AGENT_PROMPT.format(project_slug=self.project_slug)
                 ),
                 "model": _pick_b_model(config),
             }
@@ -79,7 +88,7 @@ class DesktopSession:
         self.bus_b = EventBus()
         self.bus_b.subscribe(self._on_event_b)
 
-        self.loop_b = ConversationLoop(config=b_config, confirm_fn=self._b_deny_all)
+        self.loop_b = ConversationLoop(config=b_config, confirm_fn=self._make_confirm_fn("B"))
         self.loop_b.initialize()
         self.loop_b.set_event_bus(self.bus_b)
 
@@ -105,14 +114,19 @@ class DesktopSession:
             }
         )
 
+    def _project_slug(self) -> str:
+        root = _canonical_project_root(_find_git_root(os.getcwd()) or os.getcwd())
+        return _sanitize_slug(root)
+
+    def _ensure_inspiration_dirs(self) -> None:
+        project_root = Path.home() / ".ohmycode" / "projects" / self.project_slug
+        (project_root / "inspirations").mkdir(parents=True, exist_ok=True)
+        (Path.home() / ".ohmycode" / "inspirations").mkdir(parents=True, exist_ok=True)
+
     async def _send(self, payload: dict[str, Any]) -> None:
         result = self._ws_send(payload)
         if isawaitable(result):
             await result
-
-    async def _b_deny_all(self, tool_name: str, params: dict) -> str:
-        """Window B is observational only and never executes tools."""
-        return "n"
 
     def _make_confirm_fn(self, window_id: str) -> Callable[[str, dict], Awaitable[str]]:
         async def confirm(tool_name: str, params: dict) -> str:
@@ -130,6 +144,7 @@ class DesktopSession:
                         "window": window_id,
                         "tool_name": tool_name,
                         "params": params,
+                        "params_preview": truncate_params(params),
                     },
                 }
             )
@@ -245,14 +260,34 @@ class DesktopSession:
                     {"type": "error", "window": "B", "data": {"message": str(exc)}}
                 )
 
-    async def handle_user_input(self, text: str) -> None:
-        """Append user text and start a Window A turn if one is not active."""
+    async def handle_user_input(self, text: str, target: str = "A") -> None:
+        """Append user text and start a turn in the selected window."""
+        if target == "B":
+            await self._run_explicit_b_turn(text)
+            return
+
         if self._turn_task and not self._turn_task.done():
             return
         self.profile.observe_user_message(text)
         self._a_last_text = ""
         self.loop_a.add_user_message(text)
         self._turn_task = asyncio.create_task(self._run_turn())
+
+    async def _run_explicit_b_turn(self, text: str) -> None:
+        async with self._b_lock:
+            self.loop_b.add_user_message(text)
+            self._b_turn_task = asyncio.current_task()
+            try:
+                async for _ in self.loop_b.stream_turn():
+                    pass
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                await self._send(
+                    {"type": "error", "window": "B", "data": {"message": str(exc)}}
+                )
+            finally:
+                self._b_turn_task = None
 
     async def _run_turn(self) -> None:
         try:
