@@ -137,3 +137,9 @@ Two common causes of stale-looking context:
 - The active topic was kept because routing confidence was low or the curator has not yet rebuilt packet/slice state. Use `/context topics`, `/context switch <topic_id>`, or `/context rebuild`.
 
 CJK topic titles are currently heuristic and can look awkward because they are derived from local features, not human naming. Treat an ugly title as a UX issue; treat a packet that points at the wrong task as a context correctness issue.
+
+## 26. Desktop WebSocket connections do not imply persisted sessions
+
+The desktop UI may open a WebSocket before the user sends any message, and React development remounts can briefly open and close sockets. `DesktopSession(session_id=None)` must remain uncommitted: no session directory, no message files, and no `current_session` event until the first real user input. Commit by calling `SessionStore.create_new()` from `handle_user_input()`, derive the title from that first message, then push `current_session`.
+
+`save_messages()` must no-op while uncommitted; persistence starts only after the first user message creates the session. Existing sessions loaded by id still push `current_session` and `history_loaded` during WebSocket startup.

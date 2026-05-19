@@ -56,7 +56,10 @@ async def test_tool_call_from_a_triggers_window_b_turn(monkeypatch):
     await asyncio.wait_for(session._turn_task, timeout=1)
     await _wait_until(lambda: any(item.get("window") == "B" for item in sent))
 
-    assert sent[0] == {
+    # Lazy session-create pushes a `current_session` event before the first
+    # turn now (R1.B), so skip past startup events to find ToolCallStart.
+    tool_call_starts = [item for item in sent if item.get("type") == "ToolCallStart"]
+    assert tool_call_starts[0] == {
         "type": "ToolCallStart",
         "data": {
             "tool_name": "read",

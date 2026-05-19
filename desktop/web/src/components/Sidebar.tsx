@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useAppStore } from '../state/store'
 
 export function Sidebar() {
@@ -10,6 +10,7 @@ export function Sidebar() {
   const fetchSessions = useAppStore((state) => state.fetchSessions)
   const createSession = useAppStore((state) => state.createSession)
   const switchSession = useAppStore((state) => state.switchSession)
+  const [folderHint, setFolderHint] = useState(false)
 
   useEffect(() => {
     fetchSessions()
@@ -20,9 +21,10 @@ export function Sidebar() {
       <div className="border-b border-stone-200 p-3">
         <button
           onClick={() => createSession()}
+          title="Creates a session in the current project."
           className="w-full rounded-xl bg-emerald-500 px-3 py-2 text-left text-sm font-medium text-white hover:bg-emerald-600"
         >
-          New conversation
+          New conversation (in current project)
         </button>
       </div>
 
@@ -33,10 +35,16 @@ export function Sidebar() {
           </button>
           <button
             className="w-full rounded-xl px-3 py-2 text-left text-stone-400 hover:bg-white"
-            title="Native folder picker is planned for the Tauri round."
+            onClick={() => setFolderHint(true)}
+            title="Native folder picker is planned for the Tauri round. New conversations stay in the current project."
           >
             Open folder
           </button>
+          {folderHint && (
+            <div className="px-3 py-1 text-xs text-stone-500">
+              Folder switching lands in the Tauri round. New conversations are sessions inside the current project.
+            </div>
+          )}
         </div>
 
         <section className="mt-5">

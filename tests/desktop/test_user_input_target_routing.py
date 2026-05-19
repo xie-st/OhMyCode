@@ -55,7 +55,8 @@ async def test_target_a_routes_to_window_a(monkeypatch):
     assert session.loop_a.messages == ["main task"]
     assert session.loop_a.stream_started == 1
     assert session.loop_b.messages == []
-    assert sent == [{"type": "TextChunk", "data": {"text": "A reply"}}]
+    assert sent[0]["type"] == "current_session"
+    assert sent[1:] == [{"type": "TextChunk", "data": {"text": "A reply"}}]
 
 
 @pytest.mark.asyncio
@@ -72,6 +73,7 @@ async def test_target_b_routes_directly_to_window_b(monkeypatch):
     assert session.loop_a.messages == []
     assert session.loop_b.messages == ["explain this"]
     assert session.loop_b.stream_started == 1
-    assert sent == [
+    assert sent[0]["type"] == "current_session"
+    assert sent[1:] == [
         {"type": "TextChunk", "data": {"text": "B reply"}, "window": "B"}
     ]

@@ -6,6 +6,7 @@ const AUTO_RETRY_DELAY_MS = 2000
 
 export function useWebSocket() {
   const socketRef = useRef<WebSocket | null>(null)
+  const mountedRef = useRef(false)
   const pendingSessionRef = useRef<string | null>(null)
   const autoRetryTriedRef = useRef(false)
   const autoRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -94,9 +95,13 @@ export function useWebSocket() {
   )
 
   useEffect(() => {
+    if (mountedRef.current) return
+    mountedRef.current = true
     setSessionSwitcher(switchSession)
     connect()
     return () => {
+      mountedRef.current = false
+      autoRetryTriedRef.current = true
       setSessionSwitcher(null)
       if (unmuteTimerRef.current) clearTimeout(unmuteTimerRef.current)
       if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current)
@@ -104,7 +109,7 @@ export function useWebSocket() {
       socketRef.current = null
       if (socket) socket.close()
     }
-  }, [connect, setSessionSwitcher, switchSession])
+  }, [])
 
   const sendMessage = useCallback(
     (text: string, target: 'A' | 'B' = 'A') => {

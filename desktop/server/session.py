@@ -42,6 +42,15 @@ WINDOWS_HINT = (
     "(`ls`, `cat`, `grep`, `which`). If the user explicitly asks for Unix commands, "
     "use `powershell -Command` to invoke them."
 )
+UNTITLED_SESSION_TITLES = {"New conversation", "\u65b0\u4f1a\u8bdd"}
+
+
+def _derive_title(text: str) -> str:
+    """Derive a compact title from the first user message."""
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= 30:
+        return cleaned or "\u65b0\u4f1a\u8bdd"
+    return cleaned[:30] + "\u2026"
 
 
 def _pick_b_model(config: OhMyCodeConfig) -> str:
@@ -77,12 +86,16 @@ class DesktopSession:
         self._ensure_inspiration_dirs()
         self._pending_perms: dict[str, asyncio.Future[str]] = {}
         self._auto_approved_tools: set[str] = set()
-        self.messages_a = self.store.load_messages(
-            self.project_slug, self.session.id, "A"
-        )
-        self.messages_b = self.store.load_messages(
-            self.project_slug, self.session.id, "B"
-        )
+        if self.session is None:
+            self.messages_a = []
+            self.messages_b = []
+        else:
+            self.messages_a = self.store.load_messages(
+                self.project_slug, self.session.id, "A"
+            )
+            self.messages_b = self.store.load_messages(
+                self.project_slug, self.session.id, "B"
+            )
 
         self.bus_a = EventBus()
         self.bus_a.subscribe(self._on_event_a)
@@ -137,12 +150,23 @@ class DesktopSession:
         root = _canonical_project_root(_find_git_root(os.getcwd()) or os.getcwd())
         return _sanitize_slug(root)
 
-    def _resolve_session(self, session_id: str | None) -> Session:
+    def _resolve_session(self, session_id: str | None) -> Session | None:
         if session_id:
             for session in self.store.list_sessions(self.project_slug):
                 if session.id == session_id:
                     return session
-        return self.store.create_new(self.project_slug)
+        return None
+
+    def current_session_payload(self) -> dict[str, str] | None:
+        if self.session is None:
+            return None
+        return {
+            "id": self.session.id,
+            "title": self.session.title,
+            "created_at": self.session.created_at,
+            "updated_at": self.session.updated_at,
+            "project_slug": self.session.project_slug,
+        }
 
     def _load_loop_history(self, loop: ConversationLoop, messages: list[dict]) -> None:
         for item in messages:
@@ -257,12 +281,29 @@ class DesktopSession:
         self._b_muted = muted
 
     def save_messages(self, target: str, messages: list[dict]) -> None:
+        if self.session is None:
+            return
         window = "B" if target == "B" else "A"
         self.store.save_messages(self.project_slug, self.session.id, window, messages)
         if window == "A":
             self.messages_a = messages
         else:
             self.messages_b = messages
+
+    async def _ensure_committed(self, title_source: str) -> None:
+        title = _derive_title(title_source)
+        if self.session is None:
+            self.session = self.store.create_new(self.project_slug, title=title)
+            await self._send(
+                {"type": "current_session", "data": self.current_session_payload()}
+            )
+            return
+        if self.session.title in UNTITLED_SESSION_TITLES:
+            self.store.update_title(self.project_slug, self.session.id, title)
+            self.session.title = title
+            await self._send(
+                {"type": "current_session", "data": self.current_session_payload()}
+            )
 
     def _b_trigger_allowed(self, now: float) -> bool:
         if (now - self._b_last_trigger_at) < B_COOLDOWN_SECONDS:
@@ -307,6 +348,7 @@ class DesktopSession:
 
     async def handle_user_input(self, text: str, target: str = "A") -> None:
         """Append user text and start a turn in the selected window."""
+        await self._ensure_committed(text)
         if target == "B":
             await self._run_explicit_b_turn(text)
             return

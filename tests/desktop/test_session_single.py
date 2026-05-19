@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from desktop.server.session import DesktopSession
+from desktop.server.session import _derive_title
 from desktop.server.sessions import SessionStore
 from ohmycode.config.config import OhMyCodeConfig
 from ohmycode.core.messages import (
@@ -115,7 +116,75 @@ async def test_user_input_starts_one_turn(monkeypatch):
 
     assert session.loop_a.messages == ["first"]
     assert session.loop_a.stream_started == 1
-    assert sent == [{"type": "TextChunk", "data": {"text": "hi"}}]
+    assert sent[0]["type"] == "current_session"
+    assert sent[0]["data"]["title"] == "first"
+    assert sent[1:] == [{"type": "TextChunk", "data": {"text": "hi"}}]
+
+
+@pytest.mark.asyncio
+async def test_new_desktop_session_is_uncommitted_until_user_input(tmp_path, monkeypatch):
+    monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
+    monkeypatch.setattr(
+        "desktop.server.session.DesktopSession._project_slug",
+        lambda self: "slug-one",
+    )
+    store = SessionStore(root=tmp_path / "projects")
+    sent = []
+
+    session = DesktopSession(OhMyCodeConfig(), sent.append, store=store)
+
+    assert session.session is None
+    assert session.messages_a == []
+    assert session.messages_b == []
+    assert store.list_sessions("slug-one") == []
+
+    await session.handle_user_input("A demo title")
+    await asyncio.sleep(0)
+    session.loop_a.release.set()
+    await session._turn_task
+
+    [created] = store.list_sessions("slug-one")
+    assert created.title == "A demo title"
+    assert sent[0]["type"] == "current_session"
+    assert sent[0]["data"]["id"] == created.id
+
+
+@pytest.mark.asyncio
+async def test_existing_untitled_session_title_updates_from_first_user_input(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
+    monkeypatch.setattr(
+        "desktop.server.session.DesktopSession._project_slug",
+        lambda self: "slug-one",
+    )
+    store = SessionStore(root=tmp_path / "projects")
+    session_meta = store.create_new("slug-one")
+    sent = []
+    session = DesktopSession(
+        OhMyCodeConfig(),
+        sent.append,
+        session_id=session_meta.id,
+        store=store,
+    )
+
+    task = asyncio.create_task(
+        session.handle_user_input("B demo routes nicely", target="B")
+    )
+    await asyncio.sleep(0)
+    session.loop_b.release.set()
+    await task
+
+    [saved] = store.list_sessions("slug-one")
+    assert saved.title == "B demo routes nicely"
+    assert sent[0]["type"] == "current_session"
+    assert sent[0]["data"]["title"] == "B demo routes nicely"
+
+
+def test_derive_title_collapses_whitespace_and_truncates():
+    assert _derive_title("  hello   world  ") == "hello world"
+    assert _derive_title("") == "\u65b0\u4f1a\u8bdd"
+    assert _derive_title("x" * 31) == ("x" * 30) + "\u2026"
 
 
 @pytest.mark.asyncio
@@ -175,6 +244,20 @@ def test_existing_session_history_loads_into_both_loops(tmp_path, monkeypatch):
         "old A",
     ]
     assert [message.content for message in session.loop_b.messages] == ["old B"]
+
+
+def test_save_messages_ignores_uncommitted_session(tmp_path, monkeypatch):
+    monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
+    monkeypatch.setattr(
+        "desktop.server.session.DesktopSession._project_slug",
+        lambda self: "slug-one",
+    )
+    store = SessionStore(root=tmp_path / "projects")
+    session = DesktopSession(OhMyCodeConfig(), lambda _: None, store=store)
+
+    session.save_messages("B", [{"role": "assistant", "text": "not yet"}])
+
+    assert store.list_sessions("slug-one") == []
 
 
 @pytest.mark.asyncio

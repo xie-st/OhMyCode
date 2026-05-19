@@ -40,6 +40,23 @@ def test_save_and_load_messages_by_window(tmp_path):
     assert store.load_messages("project-one", session.id, "B") == []
 
 
+def test_create_new_defaults_to_untitled_label(tmp_path):
+    store = SessionStore(root=tmp_path)
+
+    session = store.create_new("project-one")
+
+    assert session.title == "\u65b0\u4f1a\u8bdd"
+
+
+def test_save_messages_fallback_meta_uses_untitled_label(tmp_path):
+    store = SessionStore(root=tmp_path)
+
+    store.save_messages("project-one", "missing-session", "A", [])
+
+    [session] = store.list_sessions("project-one")
+    assert session.title == "\u65b0\u4f1a\u8bdd"
+
+
 def test_save_messages_refreshes_updated_at(tmp_path):
     store = SessionStore(root=tmp_path)
     session = store.create_new("project-one")

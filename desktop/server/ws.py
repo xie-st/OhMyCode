@@ -45,7 +45,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     session: DesktopSession | None = None
     try:
         config = load_config({})
-        requested_session_id = websocket.query_params.get("session")
+        requested_session_id = websocket.query_params.get("session") or None
         session = DesktopSession(config, ws_send, session_id=requested_session_id)
         websocket.app.state.session = session
         await ws_send(
@@ -59,27 +59,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 },
             }
         )
-        await ws_send(
-            {
-                "type": "current_session",
-                "data": {
-                    "id": session.session.id,
-                    "title": session.session.title,
-                    "created_at": session.session.created_at,
-                    "updated_at": session.session.updated_at,
-                    "project_slug": session.session.project_slug,
-                },
-            }
-        )
-        await ws_send(
-            {
-                "type": "history_loaded",
-                "data": {
-                    "messagesA": session.messages_a,
-                    "messagesB": session.messages_b,
-                },
-            }
-        )
+        if requested_session_id:
+            current_session = session.current_session_payload()
+            if current_session is not None:
+                await ws_send({"type": "current_session", "data": current_session})
+                await ws_send(
+                    {
+                        "type": "history_loaded",
+                        "data": {
+                            "messagesA": session.messages_a,
+                            "messagesB": session.messages_b,
+                        },
+                    }
+                )
         while True:
             try:
                 payload = await websocket.receive_json()
@@ -108,6 +100,16 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 target = "B" if data.get("target") == "B" else "A"
                 messages = data.get("messages", [])
                 if isinstance(messages, list):
+                    current_session = session.current_session_payload()
+                    session_id = (
+                        current_session["id"]
+                        if current_session is not None
+                        else "uncommitted"
+                    )
+                    print(
+                        f"[save_session] session_id={session_id} "
+                        f"target={target} count={len(messages)}"
+                    )
                     session.save_messages(target, messages)
             else:
                 await ws_send({"type": "echo", "data": payload})

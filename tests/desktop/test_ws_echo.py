@@ -28,6 +28,15 @@ class FakeSession:
         self.messages_a = []
         self.messages_b = []
 
+    def current_session_payload(self):
+        return {
+            "id": self.session.id,
+            "title": self.session.title,
+            "created_at": self.session.created_at,
+            "updated_at": self.session.updated_at,
+            "project_slug": self.session.project_slug,
+        }
+
     async def handle_user_input(self, text, target="A"):
         self.inputs.append((text, target))
 
@@ -82,7 +91,7 @@ def test_ws_saves_session_messages(monkeypatch):
     monkeypatch.setattr(ws_module, "DesktopSession", FakeSession)
 
     with TestClient(app).websocket_connect("/ws?session=session-2") as websocket:
-        _consume_runtime_info(websocket)
+        _consume_existing_session_startup(websocket)
         websocket.send_json(
             {
                 "type": "save_session",
@@ -102,6 +111,10 @@ def _consume_runtime_info(websocket):
     first = websocket.receive_json()
     assert first["type"] == "runtime_info"
     assert {"cwd", "a_model", "b_model", "provider"} <= set(first["data"].keys())
+
+
+def _consume_existing_session_startup(websocket):
+    _consume_runtime_info(websocket)
     assert websocket.receive_json()["type"] == "current_session"
     assert websocket.receive_json()["type"] == "history_loaded"
 

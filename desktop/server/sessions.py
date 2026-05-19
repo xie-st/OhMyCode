@@ -75,10 +75,10 @@ class SessionStore:
         meta = self._read_meta(session_dir / "meta.json")
         if meta is None:
             now = _now_iso()
-            meta = Session(session_id, "New conversation", now, now, slug)
+            meta = Session(session_id, "\u65b0\u4f1a\u8bdd", now, now, slug)
         self._write_meta(meta, updated_at=_now_iso())
 
-    def create_new(self, slug: str, title: str = "New conversation") -> Session:
+    def create_new(self, slug: str, title: str = "\u65b0\u4f1a\u8bdd") -> Session:
         now = _now_iso()
         session = Session(
             id=_new_session_id(),
@@ -122,7 +122,7 @@ class SessionStore:
             data = json.loads(path.read_text(encoding="utf-8"))
             return Session(
                 id=str(data["id"]),
-                title=str(data.get("title") or "New conversation"),
+                title=str(data.get("title") or "\u65b0\u4f1a\u8bdd"),
                 created_at=str(data["created_at"]),
                 updated_at=str(data["updated_at"]),
                 project_slug=str(data["project_slug"]),
