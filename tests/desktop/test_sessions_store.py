@@ -17,12 +17,17 @@ def test_create_new_writes_session_directory_and_json_files(tmp_path):
     assert session.project_slug == "project-one"
 
 
-def test_list_sessions_returns_updated_at_descending(tmp_path):
+def test_list_sessions_returns_created_at_descending(tmp_path):
     store = SessionStore(root=tmp_path)
     older = store.create_new("project-one", title="Older")
     newer = store.create_new("project-one", title="Newer")
-    store._write_meta(older, updated_at="2026-01-01T00:00:00+00:00")
-    store._write_meta(newer, updated_at="2026-01-02T00:00:00+00:00")
+    older.created_at = "2026-01-01T00:00:00+00:00"
+    newer.created_at = "2026-01-02T00:00:00+00:00"
+    store._write_meta(older)
+    store._write_meta(newer)
+    # Touch the older one's updated_at later than the newer one's, to prove
+    # that activity recency does NOT influence sidebar order.
+    store.save_messages("project-one", older.id, "A", [{"role": "user", "text": "ping"}])
 
     sessions = store.list_sessions("project-one")
 

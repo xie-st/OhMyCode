@@ -54,7 +54,12 @@ class SessionStore:
             session = self._read_meta(path / "meta.json")
             if session is not None:
                 sessions.append(session)
-        return sorted(sessions, key=lambda item: item.updated_at, reverse=True)
+        # Stable order by creation time (newest first). Earlier this sorted
+        # by updated_at, which made sessions visibly jump in the sidebar
+        # every time the user sent a message — user feedback was that the
+        # list should reflect the order conversations were *created* in,
+        # not which one was last touched.
+        return sorted(sessions, key=lambda item: item.created_at, reverse=True)
 
     def load_session(self, slug: str, session_id: str) -> Session | None:
         return self._read_meta(self._session_dir(slug, session_id) / "meta.json")
