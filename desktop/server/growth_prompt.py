@@ -19,8 +19,12 @@ not enough, use read to inspect the relevant file.
 This project's desktop conversation history is stored under:
 ~/.ohmycode/projects/{project_slug}/sessions/
 
-- a-messages-<session-id>.json: Window A history.
-- b-messages-<session-id>.json: Window B history.
+Each session has its own directory:
+~/.ohmycode/projects/{project_slug}/sessions/<session-id>/
+
+- meta.json: title and timestamps.
+- a-messages.json: Window A history.
+- b-messages.json: Window B history.
 
 When the user asks about "earlier", "last time", "the previous X", or another
 topic that requires historical context, proactively use read on the relevant

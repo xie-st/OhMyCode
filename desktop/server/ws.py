@@ -45,7 +45,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     session: DesktopSession | None = None
     try:
         config = load_config({})
-        session = DesktopSession(config, ws_send)
+        requested_session_id = websocket.query_params.get("session")
+        session = DesktopSession(config, ws_send, session_id=requested_session_id)
         websocket.app.state.session = session
         await ws_send(
             {
@@ -55,6 +56,27 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "a_model": config.model,
                     "b_model": config.window_b_model or config.model,
                     "provider": config.provider,
+                },
+            }
+        )
+        await ws_send(
+            {
+                "type": "current_session",
+                "data": {
+                    "id": session.session.id,
+                    "title": session.session.title,
+                    "created_at": session.session.created_at,
+                    "updated_at": session.session.updated_at,
+                    "project_slug": session.session.project_slug,
+                },
+            }
+        )
+        await ws_send(
+            {
+                "type": "history_loaded",
+                "data": {
+                    "messagesA": session.messages_a,
+                    "messagesB": session.messages_b,
                 },
             }
         )
@@ -81,6 +103,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 session.resolve_permission(request_id, answer)
             elif message_type == "cancel":
                 await session.cancel()
+            elif message_type == "save_session":
+                data = payload.get("data", {})
+                target = "B" if data.get("target") == "B" else "A"
+                messages = data.get("messages", [])
+                if isinstance(messages, list):
+                    session.save_messages(target, messages)
             else:
                 await ws_send({"type": "echo", "data": payload})
     except WebSocketDisconnect:

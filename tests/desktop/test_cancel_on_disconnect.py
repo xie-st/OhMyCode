@@ -50,9 +50,22 @@ class FakeLoop:
 class FakeSession:
     cancelled = 0
 
-    def __init__(self, config, ws_send):
+    def __init__(self, config, ws_send, session_id=None):
         self.config = config
         self.ws_send = ws_send
+        self.session = type(
+            "SessionMeta",
+            (),
+            {
+                "id": session_id or "session-1",
+                "title": "New conversation",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+                "project_slug": "project-one",
+            },
+        )()
+        self.messages_a = []
+        self.messages_b = []
 
     async def cancel(self):
         type(self).cancelled += 1

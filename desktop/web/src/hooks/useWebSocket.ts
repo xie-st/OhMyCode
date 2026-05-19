@@ -6,6 +6,7 @@ const AUTO_RETRY_DELAY_MS = 2000
 
 export function useWebSocket() {
   const socketRef = useRef<WebSocket | null>(null)
+  const pendingSessionRef = useRef<string | null>(null)
   const autoRetryTriedRef = useRef(false)
   const autoRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const unmuteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -13,6 +14,7 @@ export function useWebSocket() {
   const appendUserMessage = useAppStore((state) => state.appendUserMessage)
   const setStatus = useAppStore((state) => state.setStatus)
   const setUserTypingState = useAppStore((state) => state.setUserTyping)
+  const setSessionSwitcher = useAppStore((state) => state.setSessionSwitcher)
 
   const connect = useCallback(() => {
     if (autoRetryTimerRef.current) {
@@ -23,7 +25,10 @@ export function useWebSocket() {
       socketRef.current.close()
     }
     setStatus('connecting')
-    const socket = new WebSocket(WS_URL)
+    const url = pendingSessionRef.current
+      ? `${WS_URL}?session=${encodeURIComponent(pendingSessionRef.current)}`
+      : WS_URL
+    const socket = new WebSocket(url)
     socketRef.current = socket
 
     socket.onopen = () => {
@@ -43,7 +48,24 @@ export function useWebSocket() {
     }
     socket.onmessage = (message) => {
       try {
-        ingestEvent(JSON.parse(message.data))
+        const event = JSON.parse(message.data)
+        ingestEvent(event)
+        if (event.type === 'TurnComplete') {
+          const target = event.window === 'B' ? 'B' : 'A'
+          setTimeout(() => {
+            const state = useAppStore.getState()
+            const messages = target === 'B' ? state.messagesB : state.messagesA
+            if (socket.readyState === WebSocket.OPEN) {
+              socket.send(
+                JSON.stringify({
+                  type: 'save_session',
+                  data: { target, messages },
+                }),
+              )
+              void useAppStore.getState().fetchSessions()
+            }
+          }, 0)
+        }
       } catch {
         setStatus('error')
       }
@@ -55,16 +77,34 @@ export function useWebSocket() {
     connect()
   }, [connect])
 
+  const switchSession = useCallback(
+    (sessionId: string) => {
+      const socket = socketRef.current
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'cancel' }))
+      }
+      pendingSessionRef.current = sessionId
+      autoRetryTriedRef.current = true
+      if (socket) {
+        socket.close()
+      }
+      connect()
+    },
+    [connect],
+  )
+
   useEffect(() => {
+    setSessionSwitcher(switchSession)
     connect()
     return () => {
+      setSessionSwitcher(null)
       if (unmuteTimerRef.current) clearTimeout(unmuteTimerRef.current)
       if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current)
       const socket = socketRef.current
       socketRef.current = null
       if (socket) socket.close()
     }
-  }, [connect])
+  }, [connect, setSessionSwitcher, switchSession])
 
   const sendMessage = useCallback(
     (text: string, target: 'A' | 'B' = 'A') => {
@@ -123,5 +163,12 @@ export function useWebSocket() {
     [setUserTypingState],
   )
 
-  return { sendMessage, cancel, sendUserTyping, sendPermissionResponse, reconnect }
+  return {
+    sendMessage,
+    cancel,
+    sendUserTyping,
+    sendPermissionResponse,
+    reconnect,
+    switchSession,
+  }
 }

@@ -10,15 +10,18 @@ from desktop.server._serialize import serialize_event
 from desktop.server.growth_prompt import GROWTH_AGENT_PROMPT
 from desktop.server.profile import UserProfile
 from desktop.server.render_rules import truncate_params
+from desktop.server.sessions import Session, SessionStore, sessions_store
 from ohmycode.config.config import OhMyCodeConfig
 from ohmycode.core.events import EventBus
 from ohmycode.core.loop import ConversationLoop
 from ohmycode.core.messages import (
+    AssistantMessage,
     StreamEvent,
     TextChunk,
     ToolCallResult,
     ToolCallStart,
     TurnComplete,
+    UserMessage,
 )
 from ohmycode.memory.backend import (
     _canonical_project_root,
@@ -58,14 +61,28 @@ def _pick_b_model(config: OhMyCodeConfig) -> str:
 class DesktopSession:
     """Desktop session with task Window A and coaching Window B."""
 
-    def __init__(self, config: OhMyCodeConfig, ws_send: WsSend) -> None:
+    def __init__(
+        self,
+        config: OhMyCodeConfig,
+        ws_send: WsSend,
+        session_id: str | None = None,
+        store: SessionStore | None = None,
+    ) -> None:
         self.config = config
         self._ws_send = ws_send
         self.profile = UserProfile.for_cwd(os.getcwd())
         self.project_slug = self._project_slug()
+        self.store = store or sessions_store
+        self.session = self._resolve_session(session_id)
         self._ensure_inspiration_dirs()
         self._pending_perms: dict[str, asyncio.Future[str]] = {}
         self._auto_approved_tools: set[str] = set()
+        self.messages_a = self.store.load_messages(
+            self.project_slug, self.session.id, "A"
+        )
+        self.messages_b = self.store.load_messages(
+            self.project_slug, self.session.id, "B"
+        )
 
         self.bus_a = EventBus()
         self.bus_a.subscribe(self._on_event_a)
@@ -73,6 +90,7 @@ class DesktopSession:
         config_a = self._with_windows_hint(config)
         self.loop_a = ConversationLoop(config=config_a, confirm_fn=self._make_confirm_fn("A"))
         self.loop_a.initialize()
+        self._load_loop_history(self.loop_a, self.messages_a)
         self.loop_a.set_event_bus(self.bus_a)
 
         b_config = config.model_copy(
@@ -90,6 +108,7 @@ class DesktopSession:
 
         self.loop_b = ConversationLoop(config=b_config, confirm_fn=self._make_confirm_fn("B"))
         self.loop_b.initialize()
+        self._load_loop_history(self.loop_b, self.messages_b)
         self.loop_b.set_event_bus(self.bus_b)
 
         self._turn_task: asyncio.Task | None = None
@@ -117,6 +136,24 @@ class DesktopSession:
     def _project_slug(self) -> str:
         root = _canonical_project_root(_find_git_root(os.getcwd()) or os.getcwd())
         return _sanitize_slug(root)
+
+    def _resolve_session(self, session_id: str | None) -> Session:
+        if session_id:
+            for session in self.store.list_sessions(self.project_slug):
+                if session.id == session_id:
+                    return session
+        return self.store.create_new(self.project_slug)
+
+    def _load_loop_history(self, loop: ConversationLoop, messages: list[dict]) -> None:
+        for item in messages:
+            role = item.get("role")
+            text = item.get("text")
+            if not isinstance(text, str):
+                continue
+            if role == "user":
+                loop.messages.append(UserMessage(text))
+            elif role == "assistant":
+                loop.messages.append(AssistantMessage(text))
 
     def _ensure_inspiration_dirs(self) -> None:
         project_root = Path.home() / ".ohmycode" / "projects" / self.project_slug
@@ -218,6 +255,14 @@ class DesktopSession:
 
     def set_b_muted(self, muted: bool) -> None:
         self._b_muted = muted
+
+    def save_messages(self, target: str, messages: list[dict]) -> None:
+        window = "B" if target == "B" else "A"
+        self.store.save_messages(self.project_slug, self.session.id, window, messages)
+        if window == "A":
+            self.messages_a = messages
+        else:
+            self.messages_b = messages
 
     def _b_trigger_allowed(self, now: float) -> bool:
         if (now - self._b_last_trigger_at) < B_COOLDOWN_SECONDS:

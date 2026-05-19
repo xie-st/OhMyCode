@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from desktop.server.session import DesktopSession
+from desktop.server.sessions import SessionStore
 from ohmycode.config.config import OhMyCodeConfig
 from ohmycode.core.messages import (
     TextChunk,
@@ -139,6 +140,41 @@ def test_window_a_gets_windows_shell_hint_on_windows(monkeypatch):
     assert "running on Windows" in session.loop_a.config.system_prompt_append
     assert "cmd.exe" in session.loop_a.config.system_prompt_append
     assert session.loop_b.config.system_prompt_append.count("running on Windows") == 0
+
+
+def test_existing_session_history_loads_into_both_loops(tmp_path, monkeypatch):
+    monkeypatch.setattr("desktop.server.session.ConversationLoop", FakeLoop)
+    store = SessionStore(root=tmp_path / "projects")
+    session_meta = store.create_new("slug-one")
+    store.save_messages(
+        "slug-one",
+        session_meta.id,
+        "A",
+        [{"role": "user", "text": "old A user"}, {"role": "assistant", "text": "old A"}],
+    )
+    store.save_messages(
+        "slug-one",
+        session_meta.id,
+        "B",
+        [{"role": "assistant", "text": "old B"}],
+    )
+    monkeypatch.setattr(
+        "desktop.server.session.DesktopSession._project_slug",
+        lambda self: "slug-one",
+    )
+
+    session = DesktopSession(
+        OhMyCodeConfig(),
+        lambda _: None,
+        session_id=session_meta.id,
+        store=store,
+    )
+
+    assert [message.content for message in session.loop_a.messages] == [
+        "old A user",
+        "old A",
+    ]
+    assert [message.content for message in session.loop_b.messages] == ["old B"]
 
 
 @pytest.mark.asyncio

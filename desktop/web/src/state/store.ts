@@ -26,6 +26,14 @@ export interface Message {
   error?: string
 }
 
+export interface Session {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+  project_slug: string
+}
+
 export interface ProfileEvidence {
   id: string
   ts?: string
@@ -75,6 +83,8 @@ interface AppState {
   status: ConnectionStatus
   messagesA: Message[]
   messagesB: Message[]
+  sessions: Session[]
+  currentSessionId: string | null
   inputTarget: 'A' | 'B'
   runtime: RuntimeInfo | null
   isATurnActive: boolean
@@ -90,6 +100,11 @@ interface AppState {
   setBTurnActive(active: boolean): void
   setUserTyping(typing: boolean): void
   clearPendingPermission(): void
+  setSessionSwitcher(switcher: ((sessionId: string) => void) | null): void
+  fetchSessions(): Promise<void>
+  switchSession(sessionId: string): void
+  createSession(): Promise<void>
+  deleteSession(sessionId: string): Promise<void>
   fetchProfile(): Promise<void>
   deleteEvidence(evidenceId: string): Promise<void>
   clearProfile(): Promise<void>
@@ -99,6 +114,7 @@ interface AppState {
 
 const makeId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 let bTriggerTimer: ReturnType<typeof setTimeout> | null = null
+let sessionSwitcher: ((sessionId: string) => void) | null = null
 
 const ensureAssistant = (messages: Message[]): Message[] => {
   const last = messages[messages.length - 1]
@@ -214,6 +230,8 @@ export const useAppStore = create<AppState>((set) => ({
   status: 'connecting',
   messagesA: [],
   messagesB: [],
+  sessions: [],
+  currentSessionId: null,
   inputTarget: 'A',
   runtime: null,
   isATurnActive: false,
@@ -235,6 +253,42 @@ export const useAppStore = create<AppState>((set) => ({
   setUserTyping: (userTyping) => set({ userTyping }),
 
   clearPendingPermission: () => set({ pendingPermission: null }),
+
+  setSessionSwitcher: (switcher) => {
+    sessionSwitcher = switcher
+  },
+
+  fetchSessions: async () => {
+    const response = await fetch('/api/sessions')
+    if (!response.ok) {
+      set({ sessions: [] })
+      return
+    }
+    set({ sessions: (await response.json()) as Session[] })
+  },
+
+  switchSession: (sessionId) => {
+    sessionSwitcher?.(sessionId)
+  },
+
+  createSession: async () => {
+    const response = await fetch('/api/sessions', { method: 'POST' })
+    if (!response.ok) {
+      return
+    }
+    const session = (await response.json()) as Session
+    set((state) => ({ sessions: [session, ...state.sessions] }))
+    sessionSwitcher?.(session.id)
+  },
+
+  deleteSession: async (sessionId) => {
+    const response = await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' })
+    if (response.ok) {
+      set((state) => ({
+        sessions: state.sessions.filter((session) => session.id !== sessionId),
+      }))
+    }
+  },
 
   fetchProfile: async () => {
     const response = await fetch('/api/profile')
@@ -287,6 +341,28 @@ export const useAppStore = create<AppState>((set) => ({
             bModel: String(event.data.b_model ?? ''),
             provider: String(event.data.provider ?? ''),
           },
+        }
+      }
+
+      if (event.type === 'current_session') {
+        const session = event.data as unknown as Session
+        return {
+          currentSessionId: String(event.data.id ?? ''),
+          sessions: [
+            session,
+            ...state.sessions.filter((item) => item.id !== event.data.id),
+          ],
+        }
+      }
+
+      if (event.type === 'history_loaded') {
+        return {
+          messagesA: (event.data.messagesA ?? []) as unknown as Message[],
+          messagesB: (event.data.messagesB ?? []) as unknown as Message[],
+          isATurnActive: false,
+          isBTurnActive: false,
+          bTrigger: '',
+          bTriggerClearAt: null,
         }
       }
 

@@ -9,10 +9,24 @@ class FakeSession:
     cancelled = 0
     muted = []
     permissions = []
+    saved = []
 
-    def __init__(self, config, ws_send):
+    def __init__(self, config, ws_send, session_id=None):
         self.config = config
         self.ws_send = ws_send
+        self.session = type(
+            "SessionMeta",
+            (),
+            {
+                "id": session_id or "session-1",
+                "title": "New conversation",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+                "project_slug": "project-one",
+            },
+        )()
+        self.messages_a = []
+        self.messages_b = []
 
     async def handle_user_input(self, text, target="A"):
         self.inputs.append((text, target))
@@ -27,12 +41,20 @@ class FakeSession:
         type(self).permissions.append((request_id, answer))
         return True
 
+    def save_messages(self, target, messages):
+        type(self).saved.append((target, messages))
+        if target == "B":
+            self.messages_b = messages
+        else:
+            self.messages_a = messages
+
 
 def test_ws_routes_user_input(monkeypatch):
     FakeSession.inputs = []
     FakeSession.cancelled = 0
     FakeSession.muted = []
     FakeSession.permissions = []
+    FakeSession.saved = []
     monkeypatch.setattr(ws_module, "DesktopSession", FakeSession)
 
     with TestClient(app).websocket_connect("/ws") as websocket:
@@ -55,12 +77,33 @@ def test_ws_routes_user_input(monkeypatch):
     assert FakeSession.cancelled >= 1
 
 
+def test_ws_saves_session_messages(monkeypatch):
+    FakeSession.saved = []
+    monkeypatch.setattr(ws_module, "DesktopSession", FakeSession)
+
+    with TestClient(app).websocket_connect("/ws?session=session-2") as websocket:
+        _consume_runtime_info(websocket)
+        websocket.send_json(
+            {
+                "type": "save_session",
+                "data": {
+                    "target": "A",
+                    "messages": [{"role": "user", "text": "persist me"}],
+                },
+            }
+        )
+
+    assert FakeSession.saved == [("A", [{"role": "user", "text": "persist me"}])]
+
+
 def _consume_runtime_info(websocket):
     """Drop the server's startup runtime_info push so subsequent assertions
     look at the test-specific response."""
     first = websocket.receive_json()
     assert first["type"] == "runtime_info"
     assert {"cwd", "a_model", "b_model", "provider"} <= set(first["data"].keys())
+    assert websocket.receive_json()["type"] == "current_session"
+    assert websocket.receive_json()["type"] == "history_loaded"
 
 
 def test_ws_echoes_json_payload(monkeypatch):
