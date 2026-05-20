@@ -3,7 +3,7 @@ import sys
 import pytest
 
 from ohmycode.tools.base import ToolContext
-from ohmycode.tools.bash import BashTool, _decode_output
+from ohmycode.tools.bash import _MAX_OUTPUT_CHARS, BashTool, _cap_output, _decode_output
 
 
 @pytest.fixture
@@ -39,6 +39,34 @@ def test_decode_output_falls_back_to_windows_chinese_encoding():
 
     assert decoded == "当前活跃话题"
     assert "�" not in decoded
+
+
+def test_cap_output_preserves_short_text():
+    short = "hello\nworld"
+    assert _cap_output(short) == short
+
+
+def test_cap_output_truncates_with_head_and_tail():
+    payload = "X" * (_MAX_OUTPUT_CHARS * 3)
+    capped = _cap_output(payload)
+    assert len(capped) <= _MAX_OUTPUT_CHARS + 200  # notice adds <200 chars
+    assert "[bash output truncated" in capped
+    assert capped.startswith("X")
+    assert capped.endswith("X")
+
+
+@pytest.mark.asyncio
+async def test_bash_large_output_is_capped(ctx):
+    tool = BashTool()
+    # Emit ~120 KB so we trigger the cap deterministically.
+    command = (
+        f'"{sys.executable}" -c '
+        '"import sys; sys.stdout.write(\'A\' * 120000)"'
+    )
+    result = await tool.execute({"command": command}, ctx)
+    assert not result.is_error
+    assert len(result.output) <= _MAX_OUTPUT_CHARS + 500
+    assert "[bash output truncated" in result.output
 
 
 @pytest.mark.asyncio

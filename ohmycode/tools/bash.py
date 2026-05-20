@@ -9,6 +9,7 @@ import locale
 from ohmycode.tools.base import Tool, ToolContext, ToolResult, register_tool
 
 _DEFAULT_TIMEOUT = 120  # seconds
+_MAX_OUTPUT_CHARS = 30_000  # ~7-10K tokens; keeps a single `find -r` from blowing the context window
 
 
 @register_tool
@@ -53,6 +54,7 @@ class BashTool(Tool):
                 )
 
             output = _decode_output(stdout)
+            output = _cap_output(output)
             is_error = proc.returncode != 0
             if is_error:
                 output = (output or "") + f"\nExit code: {proc.returncode}"
@@ -66,6 +68,25 @@ class BashTool(Tool):
                 output=f"Error executing command: {detail}\n{full}",
                 is_error=True,
             )
+
+
+def _cap_output(text: str) -> str:
+    """Truncate runaway command output so a single recursive listing can't
+    poison the conversation history. Keeps the head + tail so error messages
+    that print at the end of long output remain visible."""
+    if len(text) <= _MAX_OUTPUT_CHARS:
+        return text
+    head_budget = int(_MAX_OUTPUT_CHARS * 0.75)
+    tail_budget = _MAX_OUTPUT_CHARS - head_budget
+    head = text[:head_budget]
+    tail = text[-tail_budget:]
+    omitted = len(text) - head_budget - tail_budget
+    notice = (
+        f"\n\n[bash output truncated: kept first {head_budget:,} chars + "
+        f"last {tail_budget:,} chars; dropped {omitted:,} chars in the middle. "
+        f"Re-run with a narrower command (head, grep, --limit, etc.) for full output.]\n\n"
+    )
+    return head + notice + tail
 
 
 def _decode_output(data: bytes) -> str:
