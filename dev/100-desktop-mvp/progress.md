@@ -584,3 +584,63 @@ Scope: continue post-R1.6 demo follow-ups. Pre-approved user scope (1+2+3 + push
 ### Not reproducible from this side
 
 - "New conversation button doesn't work" — backend verified twice from PowerShell. Next time the user reports it, they should F5 hard-refresh, then open devtools console; the new `[createSession]` warns will surface any client-side failure mode.
+
+---
+
+## R1.C — Tauri wrapper (2026-05-20)
+
+Scope: scaffold a Tauri 2 desktop shell around the existing vite frontend, no Python bundling.
+
+### Done
+
+- `npm install --save-dev @tauri-apps/cli@^2` + `npm install @tauri-apps/api@^2` in `desktop/web/`.
+- `npx tauri init --ci` generated `desktop/web/src-tauri/` (Tauri 2.11.2). Tweaks:
+  - `identifier`: `com.ohmycode.desktop` (was placeholder `com.tauri.dev`)
+  - `windows[0]`: 1400×900 with `minWidth: 900`, `minHeight: 600`
+  - Build commands wired to the existing vite scripts (`beforeDevCommand: "npm run dev"`, `beforeBuildCommand: "npm run build"`, `devUrl: http://localhost:5173`, `frontendDist: ../dist`)
+- Added npm scripts: `tauri`, `tauri:dev`, `tauri:build`.
+- Pre-warmed Rust dependency cache via `cargo build` so the user's first `npm run tauri:dev` skips the 1m42s compile:
+  - First build: 102.3s (470 crates fetched + compiled)
+  - Second build (verify cache): 13.4s (just relink)
+  - `target/` size: ~4.4 GB
+- Committed `desktop/web/src-tauri/Cargo.lock` (Rust convention for binary crates).
+
+### SSL workaround
+
+Cargo could not reach `index.crates.io` from any non-interactive shell on this machine — Windows schannel returned `SEC_E_NO_CREDENTIALS` when attempting OCSP/CRL revocation checks. Fix: created `~/.cargo/config.toml`:
+
+```toml
+[http]
+check-revoke = false
+```
+
+Cert validation itself still runs; only the revocation check is skipped. This is a per-user cargo setting, not committed to the repo. Documented inline in the config file with a comment explaining the SEC_E_NO_CREDENTIALS context.
+
+### How to run the full demo
+
+Two terminals (Tauri does NOT bundle Python — kernel runs separately):
+
+```powershell
+# Terminal 1 — Python backend
+cd C:\Users\hiyad\Desktop\Alpha\OhMyCode
+python -m desktop.server
+
+# Terminal 2 — Tauri wrapper (auto-starts vite at 5173)
+cd C:\Users\hiyad\Desktop\Alpha\OhMyCode\desktop\web
+npm run tauri:dev
+```
+
+The Tauri window opens at 1400×900, loads `http://localhost:5173`, and the existing vite proxy forwards `/ws` + `/api` to the Python server on 8765.
+
+### Not done (deferred)
+
+- Native menu bar (File / Edit / View / Help). Tauri 2 needs Rust-side menu construction; v0 ships with the default OS chrome only.
+- `npm run tauri:build` to produce a `.msi` / `.exe` installer. The Rust deps are warm so the build is ~2-3 min, but the user hasn't asked for a release artifact yet.
+- App icon customization (currently uses the Tauri scaffold's default Tauri logo).
+- Bundling Python kernel (explicitly out of scope per design — kernel stays as a separately-launched uvicorn process).
+
+### Verification
+
+- `cargo build` (second run) → `Finished dev profile [unoptimized + debuginfo] target(s) in 13.34s` (deps cached).
+- `npm run build` (vite) → 516 modules, 0 TS errors.
+- `python -m pytest tests/ -q` → still 447 passed (no Python changes this round).

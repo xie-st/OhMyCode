@@ -82,3 +82,6 @@ bench_results.json
 # Codex transient outputs
 codex-result.txt
 
+# Node compile cache (created by some sandboxed vite invocations)
+.tmp/
+
