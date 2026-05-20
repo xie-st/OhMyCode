@@ -174,15 +174,18 @@ async def test_b_card_event_carries_accepted_question(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_handle_accept_b_question_puts_pending_question_in_observation(monkeypatch):
+async def test_handle_accept_b_question_adds_natural_accept_reply(monkeypatch):
+    """The accept message added to loop_b is a plain '好的，聊聊。' so loop_b
+    reads as a real 3-turn exchange when persisted. The actual question is
+    surfaced to the frontend via the b_card event's accepted_question field,
+    not via a fake observation message."""
     session = _make_session(monkeypatch)
 
     await session.handle_accept_b_question("为什么不直接用 ohmycode 的逻辑？")
 
     assert session._last_b_trigger_reason == "user_accepted_question"
-    obs = session.loop_b.messages[0]
-    assert "[trigger_reason] user_accepted_question" in obs
-    assert "[pending_question] 为什么不直接用 ohmycode 的逻辑？" in obs
+    assert session._b_accepted_question == "为什么不直接用 ohmycode 的逻辑？"
+    assert session.loop_b.messages == ["好的，聊聊。"]
 
 
 @pytest.mark.asyncio

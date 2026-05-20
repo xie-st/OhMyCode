@@ -30,11 +30,15 @@ function CardView({ card }: { card: BCard }) {
   const reactivateStaleCard = useAppStore((s) => s.reactivateStaleCard)
 
   if (card.state === 'expanded') {
+    // Render as a transcript: B's question -> user's "好的，聊聊" -> expansion.
+    // This matches the shape that gets persisted to loop_b once the user
+    // accepts: assistant(question) / user("好的，聊聊") / assistant(expansion).
     return (
-      <article className="rounded-xl border border-pink-100 bg-white p-4">
-        <header className="mb-2 font-mono text-xs text-pink-600">
-          {card.question}
-        </header>
+      <article className="flex flex-col gap-3">
+        <div className="text-[15px] leading-7 text-stone-900">{card.question}</div>
+        <div className="font-mono text-sm text-stone-700">
+          <span className="text-pink-500">{'>'}</span> 好的，聊聊
+        </div>
         <div className="prose max-w-none text-[15px] leading-7 text-stone-900">
           <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
             {card.expansion ?? ''}

@@ -517,20 +517,14 @@ class DesktopSession:
                 self._b_turn_task = None
 
     async def handle_accept_b_question(self, question: str) -> None:
-        """User clicked 聊聊 on a B card. Bypass rate limits and run an
-        expand-mode B turn whose `trigger_reason` is `user_accepted_question`
-        and whose observation carries `pending_question`."""
+        """User clicked 聊聊 on a B card. Add a natural-language accept reply
+        so loop_b's context reads as a real 3-turn exchange
+        (assistant: question, user: '好的，聊聊', assistant: expansion).
+        Bypasses the rate limiter — the user explicitly opted in."""
         async with self._b_lock:
             self._last_b_trigger_reason = "user_accepted_question"
             self._b_accepted_question = question
-            snapshot = self.profile.snapshot_for_b(current_text=self._a_last_text)
-            observation = (
-                f"[trigger_reason] user_accepted_question\n"
-                f"[pending_question] {question}\n"
-                f"[profile_snapshot] {snapshot}\n"
-                f"[window_a_context] {self._a_last_text[-2000:]}"
-            )
-            self.loop_b.add_user_message(observation)
+            self.loop_b.add_user_message("好的，聊聊。")
             self._b_turn_task = asyncio.current_task()
             try:
                 async for _ in self.loop_b.stream_turn():
