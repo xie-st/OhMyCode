@@ -141,6 +141,63 @@ def test_inspirations_section_included(monkeypatch):
     assert "## Inspiration resources\n# A useful note" in session.loop_b.config.system_prompt_append
 
 
+@pytest.mark.asyncio
+async def test_b_card_event_emitted_on_non_silent_turn(monkeypatch):
+    sent = []
+    session = _make_session(monkeypatch, sent)
+    session._last_b_trigger_reason = "user_input"
+
+    await session._on_event_b(TextChunk("要不要聊聊这里为什么用 streaming？"))
+    await session._on_event_b(TurnComplete("stop", None))
+
+    card_events = [m for m in sent if m.get("type") == "b_card"]
+    assert len(card_events) == 1
+    assert card_events[0]["data"]["reason"] == "user_input"
+    assert card_events[0]["data"]["accepted_question"] is None
+
+
+@pytest.mark.asyncio
+async def test_b_card_event_carries_accepted_question(monkeypatch):
+    sent = []
+    session = _make_session(monkeypatch, sent)
+    session._last_b_trigger_reason = "user_accepted_question"
+    session._b_accepted_question = "为什么 plan 文件要先于 spec 写？"
+
+    await session._on_event_b(TextChunk("因为 plan 是 grill 用的活文档…"))
+    await session._on_event_b(TurnComplete("stop", None))
+
+    card_events = [m for m in sent if m.get("type") == "b_card"]
+    assert len(card_events) == 1
+    assert card_events[0]["data"]["accepted_question"] == "为什么 plan 文件要先于 spec 写？"
+    # And it should be cleared so the next ask-first turn doesn't reuse it.
+    assert session._b_accepted_question == ""
+
+
+@pytest.mark.asyncio
+async def test_handle_accept_b_question_puts_pending_question_in_observation(monkeypatch):
+    session = _make_session(monkeypatch)
+
+    await session.handle_accept_b_question("为什么不直接用 ohmycode 的逻辑？")
+
+    assert session._last_b_trigger_reason == "user_accepted_question"
+    obs = session.loop_b.messages[0]
+    assert "[trigger_reason] user_accepted_question" in obs
+    assert "[pending_question] 为什么不直接用 ohmycode 的逻辑？" in obs
+
+
+@pytest.mark.asyncio
+async def test_b_silent_does_not_emit_b_card(monkeypatch):
+    sent = []
+    session = _make_session(monkeypatch, sent)
+    session._last_b_trigger_reason = "turn_complete"
+
+    await session._on_event_b(TextChunk("[silent]"))
+    await session._on_event_b(TurnComplete("stop", None))
+
+    assert not any(m.get("type") == "b_card" for m in sent)
+    assert any(m.get("type") == "b_silent" for m in sent)
+
+
 def test_concept_dispositions_in_snapshot():
     profile = UserProfile(cwd="/tmp/fake")
     profile.concept_dispositions = {"py.async": "learn"}

@@ -1,11 +1,16 @@
+import { BCardStack } from '../components/BCardStack'
 import { EmptyState } from '../components/EmptyState'
 import { MessageList } from '../components/MessageList'
 import { useAppStore } from '../state/store'
 
 export function WindowB() {
   const messagesB = useAppStore((state) => state.messagesB)
+  const bCards = useAppStore((state) => state.bCards)
   const bTrigger = useAppStore((state) => state.bTrigger)
   const isBTurnActive = useAppStore((state) => state.isBTurnActive)
+
+  const hasCards = bCards.length > 0
+  const hasHistory = messagesB.length > 0
 
   return (
     <section className="flex h-full flex-col bg-white text-stone-900">
@@ -14,15 +19,19 @@ export function WindowB() {
           B active: {bTrigger}
         </div>
       )}
-      {messagesB.length === 0 && !isBTurnActive ? (
-        <EmptyState title="Window B" accent="pink" />
-      ) : (
+      {hasCards ? (
+        <BCardStack cards={bCards} isBTurnActive={isBTurnActive} />
+      ) : hasHistory ? (
         <MessageList
           messages={messagesB}
           tone="pink"
           showSpinner={isBTurnActive}
           spinnerLabel="Thinking"
         />
+      ) : isBTurnActive ? (
+        <BCardStack cards={[]} isBTurnActive={true} />
+      ) : (
+        <EmptyState title="Window B" accent="pink" />
       )}
     </section>
   )

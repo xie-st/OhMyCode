@@ -179,6 +179,7 @@ class DesktopSession:
         self._a_error_history: list[str] = []
         self._a_last_text: str = ""
         self._b_pending_text: str = ""
+        self._b_accepted_question: str = ""
         self._last_b_trigger_reason: str = ""
         self._background_tasks: set[asyncio.Task] = set()
 
@@ -369,6 +370,17 @@ class DesktopSession:
             if self._b_pending_text:
                 await self._send_with_window(TextChunk(self._b_pending_text), "B")
                 self._b_pending_text = ""
+            await self._send(
+                {
+                    "type": "b_card",
+                    "window": "B",
+                    "data": {
+                        "reason": self._last_b_trigger_reason or "turn_complete",
+                        "accepted_question": self._b_accepted_question or None,
+                    },
+                }
+            )
+            self._b_accepted_question = ""
             await self._send_with_window(event, "B")
             self._persist_window("B")
             return
@@ -504,6 +516,34 @@ class DesktopSession:
             finally:
                 self._b_turn_task = None
 
+    async def handle_accept_b_question(self, question: str) -> None:
+        """User clicked 聊聊 on a B card. Bypass rate limits and run an
+        expand-mode B turn whose `trigger_reason` is `user_accepted_question`
+        and whose observation carries `pending_question`."""
+        async with self._b_lock:
+            self._last_b_trigger_reason = "user_accepted_question"
+            self._b_accepted_question = question
+            snapshot = self.profile.snapshot_for_b(current_text=self._a_last_text)
+            observation = (
+                f"[trigger_reason] user_accepted_question\n"
+                f"[pending_question] {question}\n"
+                f"[profile_snapshot] {snapshot}\n"
+                f"[window_a_context] {self._a_last_text[-2000:]}"
+            )
+            self.loop_b.add_user_message(observation)
+            self._b_turn_task = asyncio.current_task()
+            try:
+                async for _ in self.loop_b.stream_turn():
+                    pass
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                await self._send(
+                    {"type": "error", "window": "B", "data": {"message": str(exc)}}
+                )
+            finally:
+                self._b_turn_task = None
+
     async def _run_turn(self) -> None:
         try:
             async for _ in self.loop_a.stream_turn():
@@ -548,6 +588,7 @@ class DesktopSession:
         self._b_turn_task = None
         self._a_last_text = ""
         self._b_pending_text = ""
+        self._b_accepted_question = ""
         self._last_b_trigger_reason = ""
         self._a_error_history = []
         self._b_last_trigger_at = 0.0

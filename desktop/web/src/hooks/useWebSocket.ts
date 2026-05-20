@@ -17,6 +17,7 @@ export function useWebSocket() {
   const setUserTypingState = useAppStore((state) => state.setUserTyping)
   const setSwitchingSession = useAppStore((state) => state.setSwitchingSession)
   const setSessionSwitcher = useAppStore((state) => state.setSessionSwitcher)
+  const setBQuestionAcceptor = useAppStore((state) => state.setBQuestionAcceptor)
 
   const connect = useCallback(() => {
     if (autoRetryTimerRef.current) {
@@ -99,15 +100,26 @@ export function useWebSocket() {
     [connect, setSwitchingSession],
   )
 
+  const sendAcceptBQuestion = useCallback((question: string) => {
+    const trimmed = question.trim()
+    const socket = socketRef.current
+    if (!trimmed || socket?.readyState !== WebSocket.OPEN) return
+    socket.send(
+      JSON.stringify({ type: 'accept_b_question', data: { question: trimmed } }),
+    )
+  }, [])
+
   useEffect(() => {
     if (mountedRef.current) return
     mountedRef.current = true
     setSessionSwitcher(switchSession)
+    setBQuestionAcceptor(sendAcceptBQuestion)
     connect()
     return () => {
       mountedRef.current = false
       autoRetryTriedRef.current = true
       setSessionSwitcher(null)
+      setBQuestionAcceptor(null)
       if (unmuteTimerRef.current) clearTimeout(unmuteTimerRef.current)
       if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current)
       const socket = socketRef.current

@@ -95,6 +95,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 session.resolve_permission(request_id, answer)
             elif message_type == "cancel":
                 await session.cancel()
+            elif message_type == "accept_b_question":
+                data = payload.get("data", {})
+                question = data.get("question", "")
+                if isinstance(question, str) and question.strip():
+                    await session.handle_accept_b_question(question.strip())
             elif message_type == "switch_session":
                 data = payload.get("data", {})
                 new_session_id = data.get("session_id")

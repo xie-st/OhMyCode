@@ -26,6 +26,17 @@ export interface Message {
   error?: string
 }
 
+export type BCardState = 'pending' | 'stale' | 'expanded'
+
+export interface BCard {
+  id: string
+  state: BCardState
+  question: string
+  expansion?: string
+  createdAt: number
+  awaitingExpansion?: boolean
+}
+
 export interface Session {
   id: string
   title: string
@@ -84,6 +95,7 @@ interface AppState {
   status: ConnectionStatus
   messagesA: Message[]
   messagesB: Message[]
+  bCards: BCard[]
   sessions: Session[]
   currentSessionId: string | null
   isSwitchingSession: boolean
@@ -114,11 +126,15 @@ interface AppState {
   clearProfile(): Promise<void>
   ingestEvent(event: StreamEvent): void
   appendUserMessage(text: string, target?: 'A' | 'B'): void
+  setBQuestionAcceptor(acceptor: ((question: string) => void) | null): void
+  acceptBQuestion(cardId: string): void
+  reactivateStaleCard(cardId: string): void
 }
 
 const makeId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 let bTriggerTimer: ReturnType<typeof setTimeout> | null = null
 let sessionSwitcher: ((sessionId: string) => void) | null = null
+let bQuestionAcceptor: ((question: string) => void) | null = null
 
 const ensureAssistant = (messages: Message[]): Message[] => {
   const last = messages[messages.length - 1]
@@ -234,6 +250,7 @@ export const useAppStore = create<AppState>((set) => ({
   status: 'connecting',
   messagesA: [],
   messagesB: [],
+  bCards: [],
   sessions: [],
   currentSessionId: null,
   isSwitchingSession: false,
@@ -269,6 +286,40 @@ export const useAppStore = create<AppState>((set) => ({
   setSessionSwitcher: (switcher) => {
     sessionSwitcher = switcher
   },
+
+  setBQuestionAcceptor: (acceptor) => {
+    bQuestionAcceptor = acceptor
+  },
+
+  acceptBQuestion: (cardId) =>
+    set((state) => {
+      const card = state.bCards.find((c) => c.id === cardId)
+      if (!card) return {}
+      // Fire the ws message and flag the card as awaiting expansion. The
+      // backend's b_card event (reason=user_accepted_question) will flip it
+      // to 'expanded' when B is done generating.
+      bQuestionAcceptor?.(card.question)
+      return {
+        bCards: state.bCards.map((c) =>
+          c.id === cardId ? { ...c, awaitingExpansion: true } : c,
+        ),
+      }
+    }),
+
+  reactivateStaleCard: (cardId) =>
+    set((state) => {
+      const target = state.bCards.find((c) => c.id === cardId)
+      if (!target || target.state !== 'stale') return {}
+      // Stale → pending; existing pending → stale; older stale already hidden
+      // (removed) by the time we got here, so no other stale to demote.
+      return {
+        bCards: state.bCards.map((c) => {
+          if (c.id === cardId) return { ...c, state: 'pending' as const }
+          if (c.state === 'pending') return { ...c, state: 'stale' as const }
+          return c
+        }),
+      }
+    }),
 
   fetchSessions: async () => {
     const response = await fetch('/api/sessions')
@@ -386,6 +437,7 @@ export const useAppStore = create<AppState>((set) => ({
         return {
           messagesA: (event.data.messagesA ?? []) as unknown as Message[],
           messagesB: (event.data.messagesB ?? []) as unknown as Message[],
+          bCards: [],
           isSwitchingSession: false,
           switchingSessionId: null,
           isATurnActive: false,
@@ -433,6 +485,75 @@ export const useAppStore = create<AppState>((set) => ({
 
       if (event.type === 'b_silent') {
         return { isBTurnActive: false }
+      }
+
+      if (event.type === 'b_card') {
+        const reason = String(event.data.reason ?? '')
+        const acceptedQuestion =
+          typeof event.data.accepted_question === 'string' && event.data.accepted_question.trim()
+            ? String(event.data.accepted_question).trim()
+            : null
+        const lastAssistant = [...state.messagesB]
+          .reverse()
+          .find((m) => m.role === 'assistant')
+        const turnText = (lastAssistant?.text ?? '').trim()
+        if (!turnText) return {}
+
+        if (reason === 'user_input' || reason === 'turn_complete') {
+          // Ask-first card. Existing pending becomes stale; existing stale is
+          // dropped (hidden). Expanded cards are kept as transcript.
+          const nextCards: BCard[] = []
+          for (const c of state.bCards) {
+            if (c.state === 'stale') continue // hidden
+            if (c.state === 'pending') {
+              nextCards.push({ ...c, state: 'stale' })
+            } else {
+              nextCards.push(c)
+            }
+          }
+          nextCards.push({
+            id: makeId(),
+            state: 'pending',
+            question: turnText,
+            createdAt: Date.now(),
+          })
+          return { bCards: nextCards }
+        }
+
+        if (reason === 'user_accepted_question' && acceptedQuestion) {
+          // Find the card whose question matches; promote to expanded.
+          const idx = state.bCards.findIndex((c) => c.question === acceptedQuestion)
+          if (idx >= 0) {
+            const updated: BCard = {
+              ...state.bCards[idx],
+              state: 'expanded',
+              expansion: turnText,
+              awaitingExpansion: false,
+            }
+            const nextCards = [...state.bCards]
+            nextCards[idx] = updated
+            return { bCards: nextCards }
+          }
+        }
+
+        if (reason === 'user_explicit' || reason === 'user_accepted_question') {
+          // Standalone expansion — e.g. user typed at @B directly, or the
+          // accept arrived but the parent card was already hidden.
+          return {
+            bCards: [
+              ...state.bCards,
+              {
+                id: makeId(),
+                state: 'expanded',
+                question: turnText.slice(0, 80),
+                expansion: turnText,
+                createdAt: Date.now(),
+              },
+            ],
+          }
+        }
+
+        return {}
       }
 
       if (eventWindow === 'B') {
